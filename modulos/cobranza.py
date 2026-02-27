@@ -8,25 +8,37 @@ def render_cobranza(supabase):
     
     # --- 1. CARGA DE DATOS ---
     try:
-        # Traemos ventas con relación a 'directorio' (para el cliente) y 'ubicaciones'
+        # Traemos ventas con sus relaciones
         res_v = supabase.table("ventas").select("""
-            *,
+            id,
+            lote_id,
+            cliente_id,
+            precio_venta,
+            enganche_pagado,
+            estatus_venta,
             cliente:directorio!cliente_id(nombre),
             ubicacion:ubicaciones(ubicacion_display, enganche_requerido)
         """).execute()
         df_v = pd.DataFrame(res_v.data)
         
-        # Traemos historial de pagos con las mismas relaciones anidadas
+        # Traemos historial de pagos
+        # Nota: Si el error persiste, usamos una consulta más plana
         res_p = supabase.table("pagos").select("""
-            *,
-            venta:ventas(
+            fecha,
+            monto,
+            metodo,
+            folio,
+            comentarios,
+            venta:ventas!venta_id(
                 cliente:directorio!cliente_id(nombre),
                 ubicacion:ubicaciones(ubicacion_display)
             )
         """).order("fecha", desc=True).execute()
         df_p = pd.DataFrame(res_p.data)
+        
     except Exception as e:
         st.error(f"Error cargando datos: {e}")
+        st.info("💡 Intenta presionar el botón 'Sincronizar Datos' en la barra lateral después de correr el SQL.")
         return
 
     tab_pago, tab_historial = st.tabs(["💵 Registrar Nuevo Pago", "📋 Historial de Ingresos"])
