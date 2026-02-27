@@ -10,7 +10,7 @@ def render_ventas(supabase):
         res_dir = supabase.table("directorio").select("id, nombre, tipo").order("nombre").execute()
         res_ub = supabase.table("ubicaciones").select("*").order("manzana").order("lote").execute()
         
-        # Ajustamos el select para reflejar los cambios en la tabla ventas (fecha_apartado, comision_venta)
+        # Ajustamos el select para usar comision_monto (el nombre que definimos en el SQL)
         res_v = supabase.table("ventas").select("""
             *,
             cliente:directorio!cliente_id(nombre),
@@ -47,7 +47,6 @@ def render_ventas(supabase):
 
                 with st.form("form_nueva_venta"):
                     c1, c2 = st.columns(2)
-                    # La fecha de contrato ahora es fecha de apartado por ahora
                     f_fec = c1.date_input("📅 Fecha de Registro", value=datetime.now())
                     
                     vendedores_df = df_dir[df_dir["tipo"] == "Vendedor"]
@@ -59,9 +58,11 @@ def render_ventas(supabase):
                     st.markdown("---")
                     cf1, cf2 = st.columns(2)
                     f_tot = cf1.number_input("Precio de Venta Final ($)", min_value=0.0, value=costo_base)
+                    
+                    # AQUÍ ESTÁ EL CAMBIO: Sugerimos $5,000 pero es editable
                     f_comision = cf2.number_input("Comisión de Venta ($)", min_value=0.0, value=5000.0)
                     
-                    st.caption("Nota: El estatus del lote cambiará a 'Apartado'. El registro de pagos se realiza en el módulo de Cobranza.")
+                    st.caption("Nota: El estatus del lote cambiará a 'Apartado'.")
 
                     if st.form_submit_button("💾 REGISTRAR APARTADO", type="primary"):
                         if f_cli_sel == "-- SELECCIONAR --" or f_vende_sel == "-- SELECCIONAR --":
@@ -75,15 +76,13 @@ def render_ventas(supabase):
                                 "cliente_id": id_cliente,
                                 "vendedor_id": id_vendedor,
                                 "precio_venta": f_tot,
-                                "comision_venta": f_comision,
+                                "comision_monto": f_comision,  # Nombre de columna actualizado
                                 "fecha_apartado": str(f_fec),
                                 "estatus_venta": "Apartado"
                             }
                             
                             try:
-                                # 1. Insertar registro en ventas
                                 supabase.table("ventas").insert(nueva_v_data).execute()
-                                # 2. Actualizar estatus del lote a "Apartado"
                                 supabase.table("ubicaciones").update({"estatus": "Apartado"}).eq("id", id_lote).execute()
                                 
                                 st.success(f"✅ Lote {f_lote_txt} registrado como APARTADO.")
@@ -97,8 +96,9 @@ def render_ventas(supabase):
         if df_v.empty:
             st.info("No hay registros.")
         else:
-            df_v['display_name'] = df_v['ubicacion'].apply(lambda x: x['ubicacion_display']) + " - " + df_v['cliente'].apply(lambda x: x['nombre'])
-            edit_sel = st.selectbox("Seleccione Registro", ["--"] + df_v["display_name"].tolist())
+            # Aplanamos nombres para el selector
+            df_v['display_name'] = df_v.apply(lambda x: f"{x['ubicacion']['ubicacion_display']} - {x['cliente']['nombre']}", axis=1)
+            edit_sel = st.selectbox("Seleccione Registro para editar", ["--"] + df_v["display_name"].tolist())
             
             if edit_sel != "--":
                 datos_v = df_v[df_v["display_name"] == edit_sel].iloc[0]
@@ -106,14 +106,14 @@ def render_ventas(supabase):
                 with st.form("form_edit_vta"):
                     st.warning(f"Editando trato de: {datos_v['cliente']['nombre']}")
                     e_tot = st.number_input("Precio Final ($)", value=float(datos_v["precio_venta"]))
-                    e_com = st.number_input("Comisión ($)", value=float(datos_v.get("comision_venta", 5000.0)))
+                    e_com = st.number_input("Comisión ($)", value=float(datos_v.get("comision_monto", 5000.0)))
                     
                     c_save, c_cancel = st.columns(2)
                     
                     if c_save.form_submit_button("💾 ACTUALIZAR DATOS"):
                         supabase.table("ventas").update({
                             "precio_venta": e_tot,
-                            "comision_venta": e_com
+                            "comision_monto": e_com
                         }).eq("id", datos_v['id']).execute()
                         st.success("Cambios guardados."); st.rerun()
 
@@ -131,14 +131,12 @@ def render_ventas(supabase):
             df_m['Eng. Requerido'] = df_m['ubicacion'].apply(lambda x: x['enganche_requerido'])
             df_m['Cliente'] = df_m['cliente'].apply(lambda x: x['nombre'])
             df_m['Vendedor'] = df_m['vendedor'].apply(lambda x: x['nombre'])
-            
-            # Mostramos fecha_apartado si existe, si no fecha_venta (por compatibilidad)
-            df_m['Fecha'] = df_m.get('fecha_apartado', df_m.get('fecha_venta', 'S/F'))
+            df_m['Fecha'] = df_m.get('fecha_apartado', 'S/F')
 
-            df_final = df_m[["Fecha", "Lote", "Cliente", "Vendedor", "precio_venta", "Eng. Requerido", "estatus_venta"]]
+            df_final = df_m[["Fecha", "Lote", "Cliente", "Vendedor", "precio_venta", "comision_monto", "estatus_venta"]]
             
             st.dataframe(
-                df_final.style.format({"precio_venta": "$ {:,.2f}", "Eng. Requerido": "$ {:,.2f}"}),
+                df_final.style.format({"precio_venta": "$ {:,.2f}", "comision_monto": "$ {:,.2f}"}),
                 use_container_width=True,
                 hide_index=True
             )
