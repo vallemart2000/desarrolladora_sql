@@ -18,33 +18,44 @@ def render_directorio(supabase):
     with tab1:
         with st.form("form_nuevo_registro", clear_on_submit=True):
             c1, c2 = st.columns(2)
-            nombre = c1.text_input("Nombre Completo")
+            nombre = c1.text_input("Nombre Completo *")
             tipo = c2.selectbox("Tipo de Contacto", ["Cliente", "Vendedor", "Prospecto", "Socio"])
             
             c3, c4 = st.columns(2)
-            telefono_input = c3.text_input("Teléfono (10 dígitos)", help="Solo números enteros.")
-            correo = c4.text_input("Correo Electrónico")
-
-            # Eliminamos el st.text_area de notas/comentarios
+            # Quitamos el 'value' por defecto para que sea opcional
+            telefono_input = c3.text_input("Teléfono (Opcional - 10 dígitos)")
+            correo = c4.text_input("Correo Electrónico (Opcional)")
 
             if st.form_submit_button("Guardar en Directorio"):
-                # VALIDACIÓN DE TELÉFONO
+                # --- LÓGICA DE VALIDACIÓN FLEXIBLE ---
                 tel_clean = "".join(filter(str.isdigit, telefono_input))
-                
-                if not nombre:
-                    st.warning("El nombre es obligatorio.")
-                elif len(tel_clean) != 10:
-                    st.error("🚨 El teléfono debe tener exactamente 10 dígitos numéricos.")
+                errores = []
+
+                # 1. Validar Nombre (Obligatorio)
+                if not nombre.strip():
+                    errores.append("El nombre es obligatorio.")
+
+                # 2. Validar Teléfono (Solo si el usuario escribió algo)
+                if tel_clean and len(tel_clean) != 10:
+                    errores.append("Si ingresas un teléfono, debe tener exactamente 10 dígitos.")
+
+                # 3. Validar Correo (Solo si el usuario escribió algo)
+                if correo.strip() and "@" not in correo:
+                    errores.append("El correo ingresado no es válido (falta el '@').")
+
+                if errores:
+                    for err in errores:
+                        st.error(f"🚨 {err}")
                 else:
                     nuevo_registro = {
                         "nombre": nombre.strip(),
                         "tipo": tipo,
-                        "telefono": tel_clean,
-                        "correo": correo.strip().lower()
+                        "telefono": tel_clean if tel_clean else None, # Guardamos NULL si está vacío
+                        "correo": correo.strip().lower() if correo.strip() else None
                     }
                     try:
                         supabase.table("directorio").insert(nuevo_registro).execute()
-                        st.success(f"✅ {nombre} guardado como {tipo}")
+                        st.success(f"✅ {nombre} guardado correctamente.")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error en base de datos: {e}")
@@ -62,7 +73,6 @@ def render_directorio(supabase):
             if filtro_tipo:
                 df_view = df_view[df_view['tipo'].isin(filtro_tipo)]
 
-            # Tabla profesional (Eliminamos la columna notas)
             st.dataframe(
                 df_view[["nombre", "tipo", "telefono", "correo"]],
                 column_config={
@@ -82,34 +92,30 @@ def render_directorio(supabase):
                 d = df[df['nombre'] == sel].iloc[0]
                 
                 with st.form("edit_dir"):
-                    st.write(f"Editando a: **{sel}**")
                     enombre = st.text_input("Nombre", value=d['nombre'])
                     etipo = st.selectbox("Tipo", ["Cliente", "Vendedor", "Prospecto", "Socio"], 
                                        index=["Cliente", "Vendedor", "Prospecto", "Socio"].index(d['tipo']))
-                    etel_input = st.text_input("Teléfono (10 dígitos)", value=d['telefono'])
-                    email = st.text_input("Correo", value=d['correo'])
+                    etel_input = st.text_input("Teléfono", value=d['telefono'] if d['telefono'] else "")
+                    email = st.text_input("Correo", value=d['correo'] if d['correo'] else "")
                     
-                    c_btn1, c_btn2 = st.columns(2)
-                    
-                    if c_btn1.form_submit_button("💾 Actualizar"):
+                    if st.form_submit_button("💾 Guardar Cambios"):
                         etel_clean = "".join(filter(str.isdigit, etel_input))
                         
-                        if len(etel_clean) == 10:
+                        # Validaciones en edición (mismas reglas)
+                        valido = True
+                        if etel_clean and len(etel_clean) != 10:
+                            st.error("Teléfono inválido (debe ser de 10 dígitos).")
+                            valido = False
+                        if email.strip() and "@" not in email:
+                            st.error("Correo inválido.")
+                            valido = False
+                            
+                        if valido:
                             upd = {
                                 "nombre": enombre.strip(), 
                                 "tipo": etipo, 
-                                "telefono": etel_clean, 
-                                "correo": email.strip().lower()
+                                "telefono": etel_clean if etel_clean else None, 
+                                "correo": email.strip().lower() if email.strip() else None
                             }
                             supabase.table("directorio").update(upd).eq("id", d['id']).execute()
-                            st.success("¡Actualizado!")
-                            st.rerun()
-                        else:
-                            st.error("🚨 El teléfono debe tener 10 dígitos.")
-                    
-                    if c_btn2.form_submit_button("🗑️ Eliminar"):
-                        supabase.table("directorio").delete().eq("id", d['id']).execute()
-                        st.warning("Registro eliminado.")
-                        st.rerun()
-        else:
-            st.info("El directorio está vacío.")
+                            st.success("¡Actualizado!"); st.rerun()
