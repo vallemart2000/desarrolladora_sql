@@ -19,7 +19,7 @@ def render_directorio(supabase):
         with st.form("form_nuevo_registro", clear_on_submit=True):
             c1, c2 = st.columns(2)
             nombre = c1.text_input("Nombre Completo *")
-            tipo = c2.selectbox("Tipo de Contacto", ["Cliente", "Vendedor", "Prospecto", "Socio"])
+            tipo = c2.selectbox("Tipo de Contacto", ["Cliente", "Vendedor"])
             
             c3, c4 = st.columns(2)
             telefono_input = c3.text_input("Teléfono (Opcional - 10 dígitos)")
