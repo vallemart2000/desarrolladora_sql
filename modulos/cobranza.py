@@ -27,15 +27,20 @@ def render_cobranza(supabase):
         st.error(f"Error cargando datos: {e}")
         return
 
-    tab_pago, tab_historial, tab_admin = st.tabs(["💵 Registrar Nuevo Pago", "📋 Historial de Ingresos", "✏️ Administrar Pagos"])
+    # Definimos las pestañas claramente
+    tab_pago, tab_historial, tab_admin = st.tabs([
+        "💵 Registrar Nuevo Pago", 
+        "📋 Historial de Ingresos", 
+        "✏️ Administrar Pagos"
+    ])
 
-    # --- PESTAÑA 1: REGISTRAR PAGO (Tu lógica actual) ---
+    # --- PESTAÑA 1: REGISTRAR PAGO ---
     with tab_pago:
         if df_v.empty:
             st.warning("No hay contratos o apartados registrados.")
         else:
-            df_v['display_vta'] = df_v.apply(lambda x: f"{x['ubicacion']['ubicacion_display']} | {x['cliente']['nombre']}", axis=1)
-            seleccion = st.selectbox("🔍 Seleccione Lote o Cliente:", ["--"] + df_v["display_vta"].tolist())
+            df_v['display_vta'] = df_v.apply(lambda x: f"{x['ubicacion']['ubicacion_display']} | {x['cliente']['nombre']}" if x['cliente'] and x['ubicacion'] else "Dato Incompleto", axis=1)
+            seleccion = st.selectbox("🔍 Seleccione Lote o Cliente:", ["--"] + df_v["display_vta"].tolist(), key="sel_pago_nuevo")
             
             if seleccion != "--":
                 v = df_v[df_v['display_vta'] == seleccion].iloc[0]
@@ -70,7 +75,6 @@ def render_cobranza(supabase):
                                 upd_v["estatus_venta"] = "Activa"
                                 upd_v["fecha_contrato"] = str(f_fec)
                                 supabase.table("ubicaciones").update({"estatus": "Vendido"}).eq("id", v['lote_id']).execute()
-                                st.balloons()
                             
                             supabase.table("ventas").update(upd_v).eq("id", v['id']).execute()
                             st.success("Pago registrado."); st.rerun()
@@ -80,57 +84,64 @@ def render_cobranza(supabase):
     with tab_historial:
         if not df_p.empty:
             df_hist = df_p.copy()
-            df_hist['Lote'] = df_hist['venta'].apply(lambda x: x['ubicacion']['ubicacion_display'] if x else "N/A")
-            df_hist['Cliente'] = df_hist['venta'].apply(lambda x: x['cliente']['nombre'] if x else "N/A")
+            df_hist['Lote'] = df_hist['venta'].apply(lambda x: x['ubicacion']['ubicacion_display'] if x and x.get('ubicacion') else "N/A")
+            df_hist['Cliente'] = df_hist['venta'].apply(lambda x: x['cliente']['nombre'] if x and x.get('cliente') else "N/A")
             st.metric("Total Recaudado", f"$ {df_hist['monto'].sum():,.2f}")
             st.dataframe(df_hist[["fecha", "Lote", "Cliente", "monto", "metodo", "folio"]], use_container_width=True, hide_index=True)
+        else:
+            st.info("No hay historial de pagos.")
 
     # --- PESTAÑA 3: ADMINISTRAR (EDITAR/ELIMINAR) ---
     with tab_admin:
-        st.subheader("🛠️ Editor de Pagos")
+        st.subheader("🛠️ Administración de Pagos Registrados")
         if df_p.empty:
-            st.info("No hay pagos para administrar.")
+            st.info("No hay pagos registrados para editar o eliminar.")
         else:
-            # Crear un selector descriptivo para los pagos
-            df_p['pago_display'] = df_p.apply(
+            # Limpiamos filas que puedan tener datos de venta nulos (borrados previos)
+            df_admin_p = df_p.dropna(subset=['venta']).copy()
+            
+            if df_admin_p.empty:
+                st.warning("Los pagos existentes pertenecen a ventas que ya no existen.")
+                return
+
+            df_admin_p['pago_display'] = df_admin_p.apply(
                 lambda x: f"{x['fecha']} | {x['venta']['ubicacion']['ubicacion_display']} | ${x['monto']:,.2f} | {x['venta']['cliente']['nombre']}", axis=1
             )
-            pago_sel = st.selectbox("Seleccione el pago a modificar o eliminar:", ["--"] + df_p['pago_display'].tolist())
+            
+            pago_sel = st.selectbox("Seleccione un pago para modificar:", ["--"] + df_admin_p['pago_display'].tolist(), key="sel_admin_pago")
             
             if pago_sel != "--":
-                p_data = df_p[df_p['pago_display'] == pago_sel].iloc[0]
+                p_data = df_admin_p[df_admin_p['pago_display'] == pago_sel].iloc[0]
                 
-                with st.form("form_edit_pago"):
-                    col1, col2 = st.columns(2)
-                    e_monto = col1.number_input("Monto ($)", value=float(p_data['monto']))
-                    e_fecha = col2.date_input("Fecha", value=datetime.strptime(p_data['fecha'], '%Y-%m-%d'))
-                    e_metodo = col1.selectbox("Método", ["Efectivo", "Transferencia", "Depósito", "Tarjeta"], 
-                                            index=["Efectivo", "Transferencia", "Depósito", "Tarjeta"].index(p_data['metodo']))
-                    e_folio = col2.text_input("Folio", value=p_data['folio'])
-                    e_coment = st.text_area("Comentarios", value=p_data['comentarios'])
+                with st.form("form_edit_pago_final"):
+                    c1, c2 = st.columns(2)
+                    e_monto = c1.number_input("Monto ($)", value=float(p_data['monto']))
+                    e_fecha = c2.date_input("Fecha", value=datetime.strptime(p_data['fecha'], '%Y-%m-%d'))
+                    e_metodo = c1.selectbox("Método", ["Efectivo", "Transferencia", "Depósito", "Tarjeta"], 
+                                          index=["Efectivo", "Transferencia", "Depósito", "Tarjeta"].index(p_data['metodo']))
+                    e_folio = c2.text_input("Folio", value=p_data['folio'] if p_data['folio'] else "")
+                    e_coment = st.text_area("Comentarios", value=p_data['comentarios'] if p_data['comentarios'] else "")
                     
-                    c_edit, c_del = st.columns(2)
+                    col_btn_1, col_btn_2 = st.columns(2)
                     
-                    if c_edit.form_submit_button("💾 GUARDAR CAMBIOS"):
-                        # 1. Actualizar el pago
+                    if col_btn_1.form_submit_button("💾 GUARDAR CAMBIOS", use_container_width=True):
                         supabase.table("pagos").update({
                             "monto": e_monto, "fecha": str(e_fecha), "metodo": e_metodo, "folio": e_folio, "comentarios": e_coment
                         }).eq("id", p_data['id']).execute()
                         
-                        # 2. Recalcular el acumulado de la venta
-                        todos_p_vta = supabase.table("pagos").select("monto").eq("venta_id", p_data['venta_id']).execute()
-                        nuevo_total = sum(item['monto'] for item in todos_p_vta.data)
+                        # Recalcular saldo de la venta
+                        res_total = supabase.table("pagos").select("monto").eq("venta_id", p_data['venta_id']).execute()
+                        nuevo_total = sum(item['monto'] for item in res_total.data)
                         supabase.table("ventas").update({"enganche_pagado": nuevo_total}).eq("id", p_data['venta_id']).execute()
                         
-                        st.success("Pago actualizado y balance recalculado."); st.rerun()
+                        st.success("¡Cambios guardados!"); st.rerun()
 
-                    if c_del.form_submit_button("🗑️ ELIMINAR PAGO"):
-                        # 1. Borrar el pago
+                    if col_btn_2.form_submit_button("🗑️ ELIMINAR PAGO", use_container_width=True):
+                        # 1. Borrar pago
                         supabase.table("pagos").delete().eq("id", p_data['id']).execute()
-                        
-                        # 2. Recalcular el acumulado de la venta tras la eliminación
-                        todos_p_vta = supabase.table("pagos").select("monto").eq("venta_id", p_data['venta_id']).execute()
-                        nuevo_total = sum(item['monto'] for item in todos_p_vta.data) if todos_p_vta.data else 0
+                        # 2. Recalcular
+                        res_total = supabase.table("pagos").select("monto").eq("venta_id", p_data['venta_id']).execute()
+                        nuevo_total = sum(item['monto'] for item in res_total.data) if res_total.data else 0
                         supabase.table("ventas").update({"enganche_pagado": nuevo_total}).eq("id", p_data['venta_id']).execute()
                         
-                        st.warning("Pago eliminado y balance de venta actualizado."); st.rerun()
+                        st.warning("Pago eliminado correctamente."); st.rerun()
