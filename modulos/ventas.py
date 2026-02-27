@@ -40,59 +40,64 @@ def render_ventas(supabase):
     tab_nueva, tab_editar, tab_lista = st.tabs(["✨ Nuevo Apartado", "✏️ Modificar Contrato", "📋 Historial"])
 
     # --- PESTAÑA 1: NUEVO APARTADO ---
-    with tab_nueva:
-        st.subheader("Registrar Intención de Compra")
-        lotes_libres = df_u[df_u["estatus_actual"] == "DISPONIBLE"]
+with tab_nueva:
+    st.subheader("Registrar Intención de Compra")
+    lotes_libres = df_u[df_u["estatus_actual"] == "DISPONIBLE"]
+    
+    if lotes_libres.empty:
+        st.warning("No hay lotes disponibles en este momento.")
+    else:
+        f_lote_txt = st.selectbox("📍 Seleccione Lote (Referencia | Precio | Enganche)", ["--"] + lotes_libres["display"].tolist())
         
-        if lotes_libres.empty:
-            st.warning("No hay lotes disponibles en este momento.")
-        else:
-            # El selectbox ahora muestra la info completa
-            f_lote_txt = st.selectbox("📍 Seleccione Lote (Referencia | Precio | Enganche)", ["--"] + lotes_libres["display"].tolist())
+        if f_lote_txt != "--":
+            row_u = lotes_libres[lotes_libres["display"] == f_lote_txt].iloc[0]
+            id_lote = int(row_u['ubicacion_id'])
+            costo_base = float(row_u['precio_lista'])
             
-            if f_lote_txt != "--":
-                row_u = lotes_libres[lotes_libres["display"] == f_lote_txt].iloc[0]
-                id_lote = int(row_u['ubicacion_id'])
-                costo_base = float(row_u['precio_lista'])
-                eng_minimo = float(row_u['enganche_req'])
+            st.success(f"Seleccionado: **{f_lote_txt.split(' | ')[0]}**")
+
+            with st.form("form_nueva_venta"):
+                c1, c2 = st.columns(2)
+                f_fec = c1.date_input("📅 Fecha de Registro", value=datetime.now())
                 
-                # Resumen visual rápido
-                st.success(f"Seleccionado: **{f_lote_txt.split(' | ')[0]}**")
+                vendedores_df = df_dir[df_dir["tipo"] == "Vendedor"]
+                f_vende_sel = c1.selectbox("👔 Vendedor", ["--"] + vendedores_df["nombre"].tolist())
+                
+                clientes_df = df_dir[df_dir["tipo"] == "Cliente"]
+                f_cli_sel = c2.selectbox("👤 Cliente", ["--"] + clientes_df["nombre"].tolist())
+                
+                st.markdown("---")
+                cf1, cf2 = st.columns(2)
+                f_tot = cf1.number_input("Precio Final Pactado ($)", min_value=0.0, value=costo_base)
+                
+                # --- AQUÍ ESTÁ EL CAMBIO: COMISIÓN SUGERIDA ---
+                f_comision = cf2.number_input(
+                    "Comisión acordada ($)", 
+                    min_value=0.0, 
+                    value=5000.0, # Valor sugerido por defecto
+                    step=500.0,
+                    help="Se sugiere una comisión de $5,000. Puedes ajustarla si es necesario."
+                )
+                
+                if st.form_submit_button("💾 REGISTRAR APARTADO", type="primary"):
+                    if f_cli_sel == "--" or f_vende_sel == "--":
+                        st.error("❌ Por favor asigne un Cliente y un Vendedor.")
+                    else:
+                        id_cliente = int(df_dir[df_dir["nombre"] == f_cli_sel]["id"].iloc[0])
+                        id_vendedor = int(df_dir[df_dir["nombre"] == f_vende_sel]["id"].iloc[0])
 
-                with st.form("form_nueva_venta"):
-                    c1, c2 = st.columns(2)
-                    f_fec = c1.date_input("📅 Fecha de Registro", value=datetime.now())
-                    
-                    vendedores_df = df_dir[df_dir["tipo"] == "Vendedor"]
-                    f_vende_sel = c1.selectbox("👔 Vendedor", ["--"] + vendedores_df["nombre"].tolist())
-                    
-                    clientes_df = df_dir[df_dir["tipo"] == "Cliente"]
-                    f_cli_sel = c2.selectbox("👤 Cliente", ["--"] + clientes_df["nombre"].tolist())
-                    
-                    st.markdown("---")
-                    cf1, cf2 = st.columns(2)
-                    f_tot = cf1.number_input("Precio Final Pactado ($)", min_value=0.0, value=costo_base)
-                    f_comision = cf2.number_input("Comisión acordada ($)", min_value=0.0, value=0.0)
-                    
-                    if st.form_submit_button("💾 REGISTRAR APARTADO", type="primary"):
-                        if f_cli_sel == "--" or f_vende_sel == "--":
-                            st.error("❌ Por favor asigne un Cliente y un Vendedor.")
-                        else:
-                            id_cliente = int(df_dir[df_dir["nombre"] == f_cli_sel]["id"].iloc[0])
-                            id_vendedor = int(df_dir[df_dir["nombre"] == f_vende_sel]["id"].iloc[0])
-
-                            nueva_v_data = {
-                                "ubicacion_id": id_lote,
-                                "cliente_id": id_cliente,
-                                "vendedor_id": id_vendedor,
-                                "fecha_venta": str(f_fec),
-                                "comision_monto": f_comision
-                            }
-                            try:
-                                supabase.table("ventas").insert(nueva_v_data).execute()
-                                st.success("✅ Registro exitoso."); st.rerun()
-                            except Exception as e: 
-                                st.error(f"Error: {e}")
+                        nueva_v_data = {
+                            "ubicacion_id": id_lote,
+                            "cliente_id": id_cliente,
+                            "vendedor_id": id_vendedor,
+                            "fecha_venta": str(f_fec),
+                            "comision_monto": f_comision
+                        }
+                        try:
+                            supabase.table("ventas").insert(nueva_v_data).execute()
+                            st.success("✅ Registro exitoso."); st.rerun()
+                        except Exception as e: 
+                            st.error(f"Error: {e}")
 
     # --- PESTAÑA 2: EDITOR ---
     with tab_editar:
