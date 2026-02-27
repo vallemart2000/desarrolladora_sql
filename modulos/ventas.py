@@ -3,26 +3,30 @@ import pandas as pd
 from datetime import datetime
 
 def render_ventas(supabase):
-    st.title("📝 Gestión de Ventas (SQL)")
+    st.title("📝 Gestión de Ventas")
 
     # --- 1. CARGA DE DATOS DESDE SUPABASE ---
-    # Traemos clientes, vendedores y lotes para los selectores
-    res_cl = supabase.table("clientes").select("id, nombre").order("nombre").execute()
-    res_vd = supabase.table("vendedores").select("id, nombre").order("nombre").execute()
-    res_ub = supabase.table("ubicaciones").select("*").order("ubicacion").execute()
-    
-    # Traemos las ventas haciendo un "JOIN" para ver nombres en lugar de IDs
-    res_v = supabase.table("ventas").select("""
-        *,
-        clientes (nombre),
-        vendedores (nombre),
-        ubicaciones (ubicacion)
-    """).execute()
+    try:
+        # Traemos TODO el directorio (para filtrar clientes y vendedores después)
+        res_dir = supabase.table("directorio").select("id, nombre, tipo").order("nombre").execute()
+        # Traemos todas las ubicaciones
+        res_ub = supabase.table("ubicaciones").select("*").order("manzana").order("lote").execute()
+        
+        # Traemos las ventas haciendo JOIN con 'directorio' dos veces (cliente y vendedor)
+        # Nota: En Supabase, para unir la misma tabla dos veces usamos el nombre de la columna
+        res_v = supabase.table("ventas").select("""
+            *,
+            cliente:directorio!cliente_id(nombre),
+            vendedor:directorio!vendedor_id(nombre),
+            ubicacion:ubicaciones(ubicacion_display)
+        """).execute()
 
-    df_cl = pd.DataFrame(res_cl.data)
-    df_vd = pd.DataFrame(res_vd.data)
-    df_u = pd.DataFrame(res_ub.data)
-    df_v = pd.DataFrame(res_v.data)
+        df_dir = pd.DataFrame(res_dir.data)
+        df_u = pd.DataFrame(res_ub.data)
+        df_v = pd.DataFrame(res_v.data)
+    except Exception as e:
+        st.error(f"Error al cargar datos: {e}")
+        return
 
     tab_nueva, tab_editar, tab_lista = st.tabs(["✨ Nueva Venta/Apartado", "✏️ Editor y Archivo", "📋 Historial"])
 
@@ -32,129 +36,119 @@ def render_ventas(supabase):
         lotes_libres = df_u[df_u["estatus"] == "Disponible"]
         
         if lotes_libres.empty:
-            st.warning("No hay lotes disponibles.")
+            st.warning("No hay lotes disponibles para nueva venta.")
         else:
-            f_lote_txt = st.selectbox("📍 Seleccione Lote", ["--"] + lotes_libres["ubicacion"].tolist())
+            # Usamos 'ubicacion_display' que es el nombre bonito (M01-L01)
+            f_lote_txt = st.selectbox("📍 Seleccione Lote", ["--"] + lotes_libres["ubicacion_display"].tolist())
             
             if f_lote_txt != "--":
-                row_u = lotes_libres[lotes_libres["ubicacion"] == f_lote_txt].iloc[0]
+                row_u = lotes_libres[lotes_libres["ubicacion_display"] == f_lote_txt].iloc[0]
                 id_lote = int(row_u['id'])
                 costo_base = float(row_u['precio_lista'])
-                eng_minimo = float(row_u['enganche_req'])
+                eng_minimo = float(row_u['enganche_requerido'])
                 
-                st.info(f"💰 **Condiciones:** Precio Lista: $ {costo_base:,.2f} | Enganche Mín: $ {eng_minimo:,.2f}")
+                st.info(f"💰 **Condiciones Sugeridas:** Precio: ${costo_base:,.2f} | Enganche: ${eng_minimo:,.2f}")
 
                 with st.form("form_nueva_venta"):
                     c1, c2 = st.columns(2)
                     f_fec = c1.date_input("📅 Fecha de Contrato", value=datetime.now())
                     
-                    # Selectores vinculados a IDs
-                    vendedores_list = ["-- SELECCIONAR --"] + df_vd["nombre"].tolist()
-                    f_vende_sel = c1.selectbox("👔 Vendedor", vendedores_list)
+                    # Filtramos el directorio para Vendedores
+                    vendedores_df = df_dir[df_dir["tipo"] == "Vendedor"]
+                    f_vende_sel = c1.selectbox("👔 Vendedor", ["-- SELECCIONAR --"] + vendedores_df["nombre"].tolist())
                     
-                    clientes_list = ["-- SELECCIONAR --"] + df_cl["nombre"].tolist()
-                    f_cli_sel = st.selectbox("👤 Cliente", clientes_list)
+                    # Filtramos el directorio para Clientes/Prospectos
+                    clientes_df = df_dir[df_dir["tipo"] != "Vendedor"]
+                    f_cli_sel = c2.selectbox("👤 Cliente", ["-- SELECCIONAR --"] + clientes_df["nombre"].tolist())
                     
                     st.markdown("---")
                     cf1, cf2, cf3 = st.columns(3)
                     f_tot = cf1.number_input("Precio Final ($)", min_value=0.0, value=costo_base)
-                    f_pla = cf2.selectbox("🕒 Plazo (Meses)", [12, 24, 36, 48, 72], index=0)
-                    f_comision = cf3.number_input("Comisión Pactada ($)", min_value=0.0, value=5000.0)
+                    f_pla = cf2.selectbox("🕒 Plazo (Meses)", [1, 12, 24, 36, 48, 60, 72], index=2)
+                    f_eng_pag = cf3.number_input("Enganche Pagado ($)", min_value=0.0, value=eng_minimo)
                     
-                    f_coment = st.text_area("📝 Notas Adicionales")
-                    m_calc = (f_tot - eng_minimo) / f_pla if f_pla > 0 else 0
+                    # Cálculo de mensualidad
+                    m_calc = (f_tot - f_eng_pag) / f_pla if f_pla > 0 else 0
                     st.write(f"📊 **Mensualidad Resultante:** $ {m_calc:,.2f}")
 
                     if st.form_submit_button("💾 GENERAR CONTRATO", type="primary"):
                         if f_cli_sel == "-- SELECCIONAR --" or f_vende_sel == "-- SELECCIONAR --":
-                            st.error("❌ Seleccione cliente y vendedor.")
+                            st.error("❌ Debe seleccionar un cliente y un vendedor del directorio.")
                         else:
-                            # Obtener IDs reales
-                            id_cliente = int(df_cl[df_cl["nombre"] == f_cli_sel]["id"].iloc[0])
-                            id_vendedor = int(df_vd[df_vd["nombre"] == f_vende_sel]["id"].iloc[0])
+                            id_cliente = int(df_dir[df_dir["nombre"] == f_cli_sel]["id"].iloc[0])
+                            id_vendedor = int(df_dir[df_dir["nombre"] == f_vende_sel]["id"].iloc[0])
 
                             nueva_v_data = {
-                                "fecha_contrato": str(f_fec),
                                 "lote_id": id_lote,
                                 "cliente_id": id_cliente,
                                 "vendedor_id": id_vendedor,
-                                "precio_total": f_tot,
-                                "enganche_pagado": 0.0,
-                                "enganche_requerido": eng_minimo,
-                                "comision_venta": f_comision,
-                                "plazo_meses": f_pla,
-                                "mensualidad": m_calc,
-                                "estatus_pago": "Pendiente",
-                                "notas": f_coment
+                                "precio_venta": f_tot,
+                                "enganche_pagado": f_eng_pag,
+                                "fecha_venta": str(f_fec),
+                                "estatus_venta": "Activa"
                             }
                             
-                            # 1. Insertar Venta
-                            supabase.table("ventas").insert(nueva_v_data).execute()
-                            # 2. Actualizar Lote
-                            supabase.table("ubicaciones").update({"estatus": "Apartado"}).eq("id", id_lote).execute()
-                            
-                            st.success(f"✅ Contrato registrado con éxito.")
-                            st.rerun()
+                            try:
+                                # 1. Insertar Venta
+                                supabase.table("ventas").insert(nueva_v_data).execute()
+                                # 2. Actualizar Lote a Vendido
+                                supabase.table("ubicaciones").update({"estatus": "Vendido"}).eq("id", id_lote).execute()
+                                
+                                st.success(f"✅ Venta registrada y lote {f_lote_txt} actualizado.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error al guardar: {e}")
 
     # --- PESTAÑA 2: EDITOR Y ARCHIVO ---
     with tab_editar:
-        st.subheader("Modificar Contratos Existentes")
+        st.subheader("Modificar / Cancelar Ventas")
         if df_v.empty:
-            st.info("No hay registros.")
+            st.info("No hay ventas registradas.")
         else:
-            # Mostramos info amigable: Ubicación | Cliente
-            df_v['display_name'] = df_v['ubicaciones'].apply(lambda x: x['ubicacion']) + " | " + df_v['clientes'].apply(lambda x: x['nombre'])
-            edit_sel = st.selectbox("Seleccione Contrato", ["--"] + df_v["display_name"].tolist())
+            # Formateamos nombre para el selector: Lote | Cliente
+            df_v['display_name'] = df_v['ubicacion'].apply(lambda x: x['ubicacion_display']) + " - " + df_v['cliente'].apply(lambda x: x['nombre'])
+            edit_sel = st.selectbox("Seleccione Venta", ["--"] + df_v["display_name"].tolist())
             
             if edit_sel != "--":
                 datos_v = df_v[df_v["display_name"] == edit_sel].iloc[0]
-                v_id = datos_v['id']
-                l_id = datos_v['lote_id']
-
-                with st.form("form_edit_vta_sql"):
-                    e_tot = st.number_input("Precio Final ($)", value=float(datos_v["precio_total"]))
-                    e_pla = st.selectbox("Plazo (Meses)", [12, 24, 36, 48, 72], index=[12, 24, 36, 48, 72].index(int(datos_v["plazo_meses"])))
-                    e_com = st.number_input("Comisión ($)", value=float(datos_v.get("comision_venta", 0)))
-                    f_motivo = st.text_input("Motivo (solo para cancelación)")
+                
+                with st.form("form_edit_vta"):
+                    st.warning(f"Editando contrato de: {datos_v['cliente']['nombre']}")
+                    e_tot = st.number_input("Precio Final ($)", value=float(datos_v["precio_venta"]))
+                    e_eng = st.number_input("Enganche Pagado ($)", value=float(datos_v["enganche_pagado"]))
+                    e_est = st.selectbox("Estatus de Venta", ["Activa", "Cancelada"], 
+                                       index=0 if datos_v['estatus_venta'] == "Activa" else 1)
                     
                     c_save, c_cancel = st.columns(2)
                     
-                    if c_save.form_submit_button("💾 GUARDAR CAMBIOS"):
-                        eng_req = float(datos_v["enganche_requerido"])
-                        nueva_mens = (e_tot - eng_req) / e_pla
-                        
+                    if c_save.form_submit_button("💾 ACTUALIZAR DATOS"):
                         supabase.table("ventas").update({
-                            "precio_total": e_tot,
-                            "plazo_meses": e_pla,
-                            "comision_venta": e_com,
-                            "mensualidad": nueva_mens
-                        }).eq("id", v_id).execute()
-                        
-                        st.success("Cambios aplicados en SQL."); st.rerun()
+                            "precio_venta": e_tot,
+                            "enganche_pagado": e_eng,
+                            "estatus_venta": e_est
+                        }).eq("id", datos_v['id']).execute()
+                        st.success("Cambios guardados."); st.rerun()
 
-                    if c_cancel.form_submit_button("❌ CANCELAR CONTRATO"):
-                        if not f_motivo: 
-                            st.error("Indique motivo de cancelación.")
-                        else:
-                            # 1. Lote disponible
-                            supabase.table("ubicaciones").update({"estatus": "Disponible"}).eq("id", l_id).execute()
-                            # 2. Borrar venta
-                            supabase.table("ventas").delete().eq("id", v_id).execute()
-                            st.warning("Venta eliminada."); st.rerun()
+                    if c_cancel.form_submit_button("🗑️ ELIMINAR REGISTRO"):
+                        # Al eliminar, liberamos el lote
+                        supabase.table("ubicaciones").update({"estatus": "Disponible"}).eq("id", datos_v['lote_id']).execute()
+                        supabase.table("ventas").delete().eq("id", datos_v['id']).execute()
+                        st.warning("Venta eliminada y lote liberado."); st.rerun()
 
     # --- PESTAÑA 3: HISTORIAL ---
     with tab_lista:
         if not df_v.empty:
-            st.subheader("📋 Resumen de Contratos")
-            # Aplanamos los datos de las relaciones para el dataframe
+            st.subheader("📋 Historial de Ventas")
             df_m = df_v.copy()
-            df_m['Ubicación'] = df_m['ubicaciones'].apply(lambda x: x['ubicacion'])
-            df_m['Cliente'] = df_m['clientes'].apply(lambda x: x['nombre'])
+            # Aplanamos para la tabla
+            df_m['Lote'] = df_m['ubicacion'].apply(lambda x: x['ubicacion_display'])
+            df_m['Cliente'] = df_m['cliente'].apply(lambda x: x['nombre'])
+            df_m['Vendedor'] = df_m['vendedor'].apply(lambda x: x['nombre'])
             
-            df_final = df_m[["id", "fecha_contrato", "Ubicación", "Cliente", "precio_total", "mensualidad", "estatus_pago"]]
+            df_final = df_m[["fecha_venta", "Lote", "Cliente", "Vendedor", "precio_venta", "enganche_pagado", "estatus_venta"]]
             
             st.dataframe(
-                df_final.style.format({"precio_total": "$ {:,.2f}", "mensualidad": "$ {:,.2f}"}),
+                df_final.style.format({"precio_venta": "$ {:,.2f}", "enganche_pagado": "$ {:,.2f}"}),
                 use_container_width=True,
                 hide_index=True
             )
