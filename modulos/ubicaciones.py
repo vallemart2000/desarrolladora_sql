@@ -6,7 +6,6 @@ def render_ubicaciones(supabase):
 
     # --- 1. OBTENER DATOS ---
     try:
-        # Traemos los datos. Supabase usa LPAD en SQL para mostrar M01-L01 en 'ubicacion_display'
         response = supabase.table("ubicaciones").select("*").order("etapa").order("manzana").order("lote").execute()
         df = pd.DataFrame(response.data)
     except Exception as e:
@@ -30,18 +29,15 @@ def render_ubicaciones(supabase):
     with st.expander("➕ Registrar Nuevo Lote"):
         with st.form("form_nueva_ubicacion", clear_on_submit=True):
             c1, c2, c3 = st.columns(3)
-            # Usamos number_input para asegurar que la DB reciba INTEGER
             etapa = c1.number_input("Etapa #", min_value=1, step=1, value=1)
             manzana = c2.number_input("Manzana #", min_value=1, step=1, value=1)
             lote = c3.number_input("Lote #", min_value=1, step=1, value=1)
             
             c4, c5 = st.columns(2)
-            # Formato moneda para los inputs
             precio = c4.number_input("Precio de Lista ($)", min_value=0.0, step=1000.0, format="%.2f")
-            enganche = c5.number_input("Enganche Requerido ($)", min_value=0.0, step=500.0, format="%.2f")
+            enganche = c5.number_input("Enganche Requerido ($)", min_value=0.0, step=1000.0, format="%.2f")
 
             if st.form_submit_button("Guardar en Base de Datos"):
-                # Enviamos INTEGER a la DB, tal como definimos en el SQL
                 nuevo_lote = {
                     "manzana": int(manzana), 
                     "lote": int(lote), 
@@ -61,14 +57,12 @@ def render_ubicaciones(supabase):
     if not df.empty:
         st.subheader("📋 Inventario Detallado")
         
-        # Filtro de búsqueda
         busqueda = st.text_input("🔍 Buscar por Referencia (ej: M01 o L15)")
         df_filtered = df.copy()
         
         if busqueda:
             df_filtered = df[df['ubicacion_display'].str.contains(busqueda, case=False, na=False)]
 
-        # Renombrado amigable para el usuario
         df_display = df_filtered.rename(columns={
             "ubicacion_display": "Ref.",
             "etapa": "Etapa",
@@ -77,13 +71,15 @@ def render_ubicaciones(supabase):
             "estatus": "Estado"
         })
 
-        # Configuración de tabla profesional
+        # --- CORRECCIÓN AQUÍ: Quitamos StatusColumn y usamos SelectboxColumn ---
         st.dataframe(
             df_display[["Ref.", "Etapa", "Precio Lista", "Enganche", "Estado"]],
             column_config={
                 "Precio Lista": st.column_config.NumberColumn(format="$%.2f"),
                 "Enganche": st.column_config.NumberColumn(format="$%.2f"),
-                "Estado": st.column_config.StatusColumn() # Le da un toque visual al estatus
+                "Estado": st.column_config.SelectboxColumn(
+                    options=["Disponible", "Vendido", "Apartado"]
+                )
             },
             use_container_width=True,
             hide_index=True
@@ -100,12 +96,10 @@ def render_ubicaciones(supabase):
             
             if col_btn.button("🗑️ Eliminar Lote", type="primary"):
                 try:
-                    # Borramos comparando la cadena generada 'M##-L##'
                     supabase.table("ubicaciones").delete().eq("ubicacion_display", lote_a_borrar).execute()
                     st.warning(f"Lote {lote_a_borrar} eliminado.")
                     st.rerun()
                 except Exception:
-                    st.error("Protección de datos: No puedes borrar un lote que ya tiene ventas.")
-
+                    st.error("Protección: No puedes borrar un lote con ventas asociadas.")
     else:
         st.info("No hay lotes en el inventario.")
