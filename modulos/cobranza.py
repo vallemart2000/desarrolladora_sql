@@ -4,112 +4,125 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
 def render_cobranza(supabase):
-    st.title("💰 Gestión de Cobranza (SQL)")
+    st.title("💰 Gestión de Cobranza")
     
     # --- 1. CARGA DE DATOS ---
-    # Traemos ventas con sus relaciones para el selector
-    res_v = supabase.table("ventas").select("*, clientes(nombre), ubicaciones(ubicacion)").execute()
-    df_v = pd.DataFrame(res_v.data)
-    
-    # Traemos historial de pagos
-    res_p = supabase.table("pagos").select("*, ventas(id, cliente_id, clientes(nombre), ubicaciones(ubicacion))").order("fecha", desc=True).execute()
-    df_p = pd.DataFrame(res_p.data)
+    try:
+        # Traemos ventas activas/apartadas con nombres de clientes y ubicación
+        res_v = supabase.table("ventas").select("""
+            *,
+            cliente:directorio!cliente_id(nombre),
+            vendedor:directorio!vendedor_id(nombre),
+            ubicacion:ubicaciones(ubicacion_display, enganche_requerido)
+        """).execute()
+        df_v = pd.DataFrame(res_v.data)
+        
+        # Traemos historial de pagos con JOIN simple para visualización
+        res_p = supabase.table("pagos").select("""
+            *,
+            venta:ventas(
+                cliente:directorio!cliente_id(nombre),
+                ubicacion:ubicaciones(ubicacion_display)
+            )
+        """).order("fecha", desc=True).execute()
+        df_p = pd.DataFrame(res_p.data)
+    except Exception as e:
+        st.error(f"Error cargando datos: {e}")
+        return
 
     tab_pago, tab_historial = st.tabs(["💵 Registrar Nuevo Pago", "📋 Historial de Ingresos"])
 
     # --- PESTAÑA 1: REGISTRAR PAGO ---
     with tab_pago:
         if df_v.empty:
-            st.warning("No hay contratos registrados.")
+            st.warning("No hay contratos o apartados registrados.")
         else:
-            # Preparamos las opciones del selector
-            df_v['display_vta'] = df_v['ubicaciones'].apply(lambda x: x['ubicacion']) + " | " + df_v['clientes'].apply(lambda x: x['nombre'])
-            seleccion = st.selectbox("🔍 Seleccione Lote o Cliente:", ["--"] + df_v["display_name" if "display_name" in df_v else "display_vta"].tolist())
+            # Selector amigable
+            df_v['display_vta'] = df_v['ubicacion'].apply(lambda x: x['ubicacion_display']) + " | " + df_v['cliente'].apply(lambda x: x['nombre'])
+            seleccion = st.selectbox("🔍 Seleccione Lote o Cliente:", ["--"] + df_v["display_vta"].tolist())
             
             if seleccion != "--":
-                # Extraer datos de la venta seleccionada
                 v = df_v[df_v['display_vta'] == seleccion].iloc[0]
                 v_id = v['id']
                 l_id = v['lote_id']
-                ubi_txt = v['ubicaciones']['ubicacion']
                 
-                eng_req = float(v['enganche_requerido'])
-                eng_pag = float(v['enganche_pagado'])
-                mensualidad_pactada = float(v['mensualidad'])
+                # Datos financieros
+                eng_req = float(v['ubicacion']['enganche_requerido'])
+                eng_pag_actual = float(v.get('enganche_pagado', 0) or 0)
+                faltante_eng = max(0.0, eng_req - eng_pag_actual)
                 
-                faltante_eng = max(0.0, eng_req - eng_pag)
-                es_apartado = eng_pag < eng_req
-
-                if es_apartado:
-                    st.warning(f"⚠️ **ESTADO: APARTADO** (Faltan $ {faltante_eng:,.2f} para completar enganche)")
-                    monto_sugerido = faltante_eng
+                # Interfaz de estatus
+                if v['estatus_venta'] == "Apartado":
+                    st.warning(f"⚠️ **ESTADO: APARTADO** (Faltan $ {faltante_eng:,.2f} para cubrir el enganche requerido de $ {eng_req:,.2f})")
                 else:
-                    st.success(f"🟢 **ESTADO: ACTIVO** (Enganche cubierto)")
-                    monto_sugerido = mensualidad_pactada
+                    st.success(f"🟢 **ESTADO: VENDIDO / ACTIVO** (Enganche cubierto)")
 
-                with st.form("form_pago_sql"):
+                with st.form("form_pago_sql", clear_on_submit=True):
                     c1, c2, c3 = st.columns(3)
                     f_fec = c1.date_input("Fecha de Pago", value=datetime.now())
-                    f_met = c2.selectbox("Método", ["Efectivo", "Transferencia", "Depósito"])
+                    f_met = c2.selectbox("Método", ["Efectivo", "Transferencia", "Depósito", "Tarjeta"])
                     f_fol = c3.text_input("Folio / Referencia")
                     
-                    f_mon = st.number_input("Importe a Recibir ($)", min_value=0.0, value=float(monto_sugerido))
-                    f_com = st.text_area("Comentarios")
+                    f_mon = st.number_input("Importe a Recibir ($)", min_value=0.01, value=float(faltante_eng) if faltante_eng > 0 else 5000.0)
+                    f_com = st.text_area("Notas del pago")
                     
                     if st.form_submit_button("✅ REGISTRAR PAGO", type="primary"):
-                        if f_mon <= 0:
-                            st.error("El monto debe ser mayor a 0.")
-                        else:
-                            try:
-                                # 1. Registrar el pago
-                                pago_data = {
-                                    "venta_id": int(v_id),
-                                    "fecha": str(f_fec),
-                                    "monto": f_mon,
-                                    "metodo": f_met,
-                                    "folio": f_fol,
-                                    "comentarios": f_com
-                                }
-                                supabase.table("pagos").insert(pago_data).execute()
+                        try:
+                            # 1. Registrar el pago en la tabla 'pagos'
+                            pago_data = {
+                                "venta_id": int(v_id),
+                                "fecha": str(f_fec),
+                                "monto": f_mon,
+                                "metodo": f_met,
+                                "folio": f_fol,
+                                "comentarios": f_com
+                            }
+                            supabase.table("pagos").insert(pago_data).execute()
 
-                                # 2. Actualizar la Venta (Enganche)
-                                nuevo_eng_pag = eng_pag + f_mon
-                                update_venta = {"enganche_pagado": nuevo_eng_pag}
+                            # 2. Calcular nuevo acumulado y actualizar Venta
+                            nuevo_acumulado = eng_pag_actual + f_mon
+                            update_v = {"enganche_pagado": nuevo_acumulado}
+                            
+                            # LOGICA DE CAMBIO DE ESTATUS:
+                            # Si era apartado y el nuevo pago alcanza el requerido...
+                            if v['estatus_venta'] == "Apartado" and nuevo_acumulado >= eng_req:
+                                update_v["estatus_venta"] = "Activa"
+                                update_v["fecha_contrato"] = str(f_fec) # Fecha en que se completó
                                 
-                                # Si completa enganche, cambia estatus y actualiza lote
-                                if eng_pag < eng_req and nuevo_eng_pag >= eng_req:
-                                    update_venta["estatus_pago"] = "Al corriente"
-                                    # La mensualidad inicia un mes después
-                                    f_mens = (f_fec + relativedelta(months=1)).strftime('%Y-%m-%d')
-                                    update_venta["fecha_contrato"] = str(f_fec)
-                                    
-                                    # Actualizar estatus del lote a VENDIDO
-                                    supabase.table("ubicaciones").update({"estatus": "Vendido"}).eq("id", l_id).execute()
-                                    st.balloons()
-
-                                supabase.table("ventas").update(update_venta).eq("id", v_id).execute()
-                                
-                                st.success(f"✅ Pago de $ {f_mon:,.2f} registrado correctamente.")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Error en la base de datos: {e}")
+                                # Actualizar Ubicación a VENDIDO
+                                supabase.table("ubicaciones").update({"estatus": "Vendido"}).eq("id", l_id).execute()
+                                st.balloons()
+                                st.success("¡Felicidades! El enganche se ha cubierto. El lote ahora está marcado como VENDIDO.")
+                            
+                            supabase.table("ventas").update(update_v).eq("id", v_id).execute()
+                            
+                            st.success(f"✅ Pago de $ {f_mon:,.2f} registrado.")
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"Error al procesar pago: {e}")
 
     # --- PESTAÑA 2: HISTORIAL ---
     with tab_historial:
-        st.subheader("📋 Historial de Cobros")
+        st.subheader("📋 Historial de Ingresos")
         if df_p.empty:
-            st.info("No hay pagos registrados.")
+            st.info("No hay pagos registrados aún.")
         else:
-            # Aplanamos para mostrar en tabla
+            # Aplanamos datos para la tabla
             df_hist = df_p.copy()
-            df_hist['Lote'] = df_hist['ventas'].apply(lambda x: x['ubicaciones']['ubicacion'])
-            df_hist['Cliente'] = df_hist['ventas'].apply(lambda x: x['clientes']['nombre'])
+            df_hist['Lote'] = df_hist['venta'].apply(lambda x: x['ubicacion']['ubicacion_display'])
+            df_hist['Cliente'] = df_hist['venta'].apply(lambda x: x['cliente']['nombre'])
             
-            st.metric("Total en Caja", f"$ {df_hist['monto'].sum():,.2f}")
+            st.metric("Total Recaudado", f"$ {df_hist['monto'].sum():,.2f}")
             
             st.dataframe(
-                df_hist[["fecha", "Lote", "Cliente", "monto", "metodo", "folio"]],
-                column_config={"monto": st.column_config.NumberColumn("Importe", format="$ %.2f")},
+                df_hist[["fecha", "Lote", "Cliente", "monto", "metodo", "folio", "comentarios"]],
+                column_config={
+                    "fecha": "Fecha",
+                    "monto": st.column_config.NumberColumn("Importe", format="$ %.2f"),
+                    "metodo": "Método",
+                    "folio": "Ref"
+                },
                 use_container_width=True,
                 hide_index=True
             )
