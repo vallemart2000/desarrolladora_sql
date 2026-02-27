@@ -1,7 +1,14 @@
 import streamlit as st
 from supabase import create_client, Client
 
-# Importación de tus módulos convertidos
+# --- 1. CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(
+    page_title="Valle Mart - Sistema de Gestión",
+    page_icon="🏘️",
+    layout="wide"
+)
+
+# Importación de tus módulos
 from modulos import (
     inicio, 
     ubicaciones, 
@@ -13,15 +20,7 @@ from modulos import (
     gastos
 )
 
-# --- 1. CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(
-    page_title="Valle Mart - Sistema de Gestión",
-    page_icon="🏘️",
-    layout="wide"
-)
-
 # --- 2. CONEXIÓN A SUPABASE ---
-# Estos datos los obtienes de Project Settings -> API en tu panel de Supabase
 SUPABASE_URL = st.secrets["supabase_url"]
 SUPABASE_KEY = st.secrets["supabase_key"]
 
@@ -38,13 +37,15 @@ st.markdown("""
     .stMetric { background-color: #f0f2f6; padding: 10px; border-radius: 10px; }
     [data-testid="stSidebar"] { background-color: #1a2634; }
     [data-testid="stSidebar"] .stMarkdown { color: white; }
+    /* Ajuste para que el texto del radio button sea blanco */
+    [data-testid="stSidebar"] label { color: white !important; }
     </style>
     """, unsafe_allow_html=True)
 
 # --- 4. MENÚ LATERAL (Navegación) ---
 with st.sidebar:
-    st.image("https://via.placeholder.com/150?text=VALLE+MART", width=150) # Pon aquí tu logo real
-    st.title("Inmobiliaria")
+    st.markdown("<h1 style='text-align: center; color: white;'>🏘️ VALLE MART</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #8892b0;'>Gestión Inmobiliaria</p>", unsafe_allow_html=True)
     st.markdown("---")
     
     menu = st.radio(
@@ -60,15 +61,21 @@ with st.sidebar:
     )
     
     st.markdown("---")
-    st.caption("v2.0 - Migración SQL Completa")
+    
+    # BOTÓN DE ACTUALIZACIÓN MANUAL
+    if st.button("🔄 Sincronizar Datos"):
+        st.cache_resource.clear()
+        st.rerun()
+        
+    st.caption("v2.1 - SQL Sync Active")
 
 # --- 5. ENRUTADOR DE MÓDULOS ---
-# Cada módulo recibe ahora solo el objeto 'supabase'
 try:
     if menu == "🏠 Inicio":
         inicio.render_inicio(supabase)
         
     elif menu == "📍 Mapa de Lotes":
+        # Usando el nombre de función que definimos en pasos anteriores
         ubicaciones.render_ubicaciones(supabase)
         
     elif menu == "👤 Directorio":
@@ -91,4 +98,4 @@ try:
 
 except Exception as e:
     st.error(f"🚨 Error en la carga del módulo: {e}")
-    st.info("Asegúrate de que todas las tablas estén creadas en Supabase.")
+    st.info("Tip: Si acabas de hacer cambios en SQL, usa el botón 'Sincronizar Datos'.")
