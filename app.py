@@ -72,7 +72,7 @@ try:
         ubicaciones.render_ubicaciones(supabase)
         
     elif menu == "👤 Directorio":
-        directorio.render_clientes(supabase)
+        directorio.render_directorio(supabase)
         
     elif menu == "📝 Nueva Venta":
         ventas.render_ventas(supabase)
