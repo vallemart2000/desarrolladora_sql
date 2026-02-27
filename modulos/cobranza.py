@@ -8,16 +8,16 @@ def render_cobranza(supabase):
     
     # --- 1. CARGA DE DATOS ---
     try:
-        # Traemos ventas activas/apartadas con nombres de clientes y ubicación
+        # CORRECCIÓN: Usamos 'directorio' en lugar de 'clientes'
+        # y especificamos la relación cliente_id
         res_v = supabase.table("ventas").select("""
             *,
             cliente:directorio!cliente_id(nombre),
-            vendedor:directorio!vendedor_id(nombre),
             ubicacion:ubicaciones(ubicacion_display, enganche_requerido)
         """).execute()
         df_v = pd.DataFrame(res_v.data)
         
-        # Traemos historial de pagos con JOIN simple para visualización
+        # CORRECCIÓN: Para el historial de pagos también ajustamos las relaciones
         res_p = supabase.table("pagos").select("""
             *,
             venta:ventas(
