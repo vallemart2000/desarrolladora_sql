@@ -5,7 +5,7 @@ from supabase import create_client, Client
 from modulos import (
     inicio, 
     ubicaciones, 
-    clientes, 
+    directorio,
     ventas, 
     cobranza, 
     credito, 
@@ -51,7 +51,7 @@ with st.sidebar:
         "📂 Menú Principal",
         ["🏠 Inicio", 
          "📍 Mapa de Lotes", 
-         "👤 Clientes", 
+         "👤 Directorio", 
          "📝 Nueva Venta", 
          "💰 Cobranza", 
          "📊 Detalle de Crédito", 
@@ -71,8 +71,8 @@ try:
     elif menu == "📍 Mapa de Lotes":
         ubicaciones.render_ubicaciones(supabase)
         
-    elif menu == "👤 Clientes":
-        clientes.render_clientes(supabase)
+    elif menu == "👤 Directorio":
+        directorio.render_clientes(supabase)
         
     elif menu == "📝 Nueva Venta":
         ventas.render_ventas(supabase)
