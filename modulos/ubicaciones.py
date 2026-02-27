@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 def render_ubicaciones(supabase):
-    st.header("📍 Control de Inventario de Lotes (Numérico)")
+    st.header("📍 Control de Inventario de Lotes")
 
     # --- 1. OBTENER DATOS ---
     try:
@@ -15,91 +15,85 @@ def render_ubicaciones(supabase):
     # --- 2. MÉTRICAS RÁPIDAS ---
     if not df.empty:
         col_m1, col_m2, col_m3 = st.columns(3)
-        with col_m1:
-            st.metric("Total Lotes", len(df))
-        with col_m2:
-            disponibles = len(df[df['estatus'] == 'Disponible'])
-            st.metric("Disponibles", disponibles)
-        with col_m3:
-            valor_total = df['precio_lista'].sum()
-            st.metric("Valor Inventario", f"${valor_total:,.2f}")
+        col_m1.metric("Total Lotes", len(df))
+        col_m2.metric("Disponibles", len(df[df['estatus'] == 'Disponible']))
+        col_m3.metric("Valor Inventario", f"${df['precio_lista'].sum():,.2f}")
         st.markdown("---")
 
-    # --- 3. FORMULARIO DE CAPTURA ESTRICTAMENTE NUMÉRICO ---
-    with st.expander("➕ Registrar Nuevo Lote"):
+    # --- 3. PESTAÑAS: REGISTRO VS EDICIÓN ---
+    tab1, tab2 = st.tabs(["➕ Registrar Nuevo", "✏️ Editar / Borrar"])
+
+    with tab1:
         with st.form("form_nueva_ubicacion", clear_on_submit=True):
             c1, c2, c3 = st.columns(3)
-            etapa = c1.number_input("Etapa #", min_value=1, step=1, value=1)
-            manzana = c2.number_input("Manzana #", min_value=1, step=1, value=1)
-            lote = c3.number_input("Lote #", min_value=1, step=1, value=1)
+            etapa = c1.number_input("Etapa #", min_value=1, step=1)
+            manzana = c2.number_input("Manzana #", min_value=1, step=1)
+            lote = c3.number_input("Lote #", min_value=1, step=1)
             
             c4, c5 = st.columns(2)
-            precio = c4.number_input("Precio de Lista ($)", min_value=0.0, step=1000.0, format="%.2f")
-            enganche = c5.number_input("Enganche Requerido ($)", min_value=0.0, step=1000.0, format="%.2f")
+            precio = c4.number_input("Precio de Lista ($)", min_value=0.0, step=1000.0)
+            enganche = c5.number_input("Enganche Requerido ($)", min_value=0.0, step=1000.0)
 
-            if st.form_submit_button("Guardar en Base de Datos"):
-                nuevo_lote = {
-                    "manzana": int(manzana), 
-                    "lote": int(lote), 
-                    "etapa": int(etapa),
-                    "precio_lista": precio, 
-                    "enganche_requerido": enganche,
-                    "estatus": "Disponible"
+            if st.form_submit_button("Guardar Lote"):
+                data = {
+                    "manzana": int(manzana), "lote": int(lote), "etapa": int(etapa),
+                    "precio_lista": precio, "enganche_requerido": enganche, "estatus": "Disponible"
                 }
-                try:
-                    supabase.table("ubicaciones").insert(nuevo_lote).execute()
-                    st.success(f"✅ Lote registrado con éxito!")
+                supabase.table("ubicaciones").insert(data).execute()
+                st.success("✅ ¡Lote registrado!")
+                st.rerun()
+
+    with tab2:
+        if not df.empty:
+            lote_sel_ref = st.selectbox("Selecciona un lote para modificar", df['ubicacion_display'].tolist())
+            datos_lote = df[df['ubicacion_display'] == lote_sel_ref].iloc[0]
+
+            with st.form("form_edicion"):
+                st.write(f"Editando: **{lote_sel_ref}**")
+                col_e1, col_e2 = st.columns(2)
+                nuevo_precio = col_e1.number_input("Nuevo Precio ($)", value=float(datos_lote['precio_lista']), step=1000.0)
+                nuevo_enganche = col_e2.number_input("Nuevo Enganche ($)", value=float(datos_lote['enganche_requerido']), step=1000.0)
+                
+                nuevo_estatus = st.selectbox("Cambiar Estatus", ["Disponible", "Apartado", "Vendido"], 
+                                           index=["Disponible", "Apartado", "Vendido"].index(datos_lote['estatus']))
+
+                col_btn1, col_btn2 = st.columns([1, 1])
+                if col_btn1.form_submit_button("💾 Guardar Cambios"):
+                    update_data = {
+                        "precio_lista": nuevo_precio,
+                        "enganche_requerido": nuevo_enganche,
+                        "estatus": nuevo_estatus
+                    }
+                    supabase.table("ubicaciones").update(update_data).eq("id", int(datos_lote['id'])).execute()
+                    st.success("¡Cambios aplicados!")
                     st.rerun()
-                except Exception as e:
-                    st.error(f"Error al insertar: {e}")
+                
+                if col_btn2.form_submit_button("🗑️ Eliminar Lote"):
+                    try:
+                        supabase.table("ubicaciones").delete().eq("id", int(datos_lote['id'])).execute()
+                        st.warning("Lote eliminado.")
+                        st.rerun()
+                    except:
+                        st.error("No se puede borrar si tiene ventas.")
+        else:
+            st.info("No hay datos para editar.")
 
-    # --- 4. TABLA DE GESTIÓN ---
+    # --- 4. TABLA DE GESTIÓN (CON FORMATO $) ---
     if not df.empty:
-        st.subheader("📋 Inventario Detallado")
+        st.subheader("📋 Inventario Actual")
         
-        busqueda = st.text_input("🔍 Buscar por Referencia (ej: M01 o L15)")
-        df_filtered = df.copy()
-        
-        if busqueda:
-            df_filtered = df[df['ubicacion_display'].str.contains(busqueda, case=False, na=False)]
+        busqueda = st.text_input("🔍 Filtrar por Ref (ej: M01)")
+        df_view = df[df['ubicacion_display'].str.contains(busqueda, case=False, na=False)] if busqueda else df
 
-        df_display = df_filtered.rename(columns={
-            "ubicacion_display": "Ref.",
-            "etapa": "Etapa",
-            "precio_lista": "Precio Lista",
-            "enganche_requerido": "Enganche",
-            "estatus": "Estado"
-        })
-
-        # --- CORRECCIÓN AQUÍ: Quitamos StatusColumn y usamos SelectboxColumn ---
         st.dataframe(
-            df_display[["Ref.", "Etapa", "Precio Lista", "Enganche", "Estado"]],
+            df_view[["ubicacion_display", "etapa", "precio_lista", "enganche_requerido", "estatus"]],
             column_config={
-                "Precio Lista": st.column_config.NumberColumn(format="$%.2f"),
-                "Enganche": st.column_config.NumberColumn(format="$%.2f"),
-                "Estado": st.column_config.SelectboxColumn(
-                    options=["Disponible", "Vendido", "Apartado"]
-                )
+                "ubicacion_display": "Lote",
+                "etapa": "Etapa",
+                "precio_lista": st.column_config.NumberColumn("Precio Lista", format="$%,.2f"),
+                "enganche_requerido": st.column_config.NumberColumn("Enganche", format="$%,.2f"),
+                "estatus": "Estado"
             },
             use_container_width=True,
             hide_index=True
         )
-
-        # --- 5. SECCIÓN DE ACCIONES ---
-        st.markdown("---")
-        with st.expander("🛠️ Acciones Avanzadas"):
-            col_sel, col_btn = st.columns([3, 1])
-            lote_a_borrar = col_sel.selectbox(
-                "Seleccionar lote para eliminar", 
-                df['ubicacion_display'].unique().tolist()
-            )
-            
-            if col_btn.button("🗑️ Eliminar Lote", type="primary"):
-                try:
-                    supabase.table("ubicaciones").delete().eq("ubicacion_display", lote_a_borrar).execute()
-                    st.warning(f"Lote {lote_a_borrar} eliminado.")
-                    st.rerun()
-                except Exception:
-                    st.error("Protección: No puedes borrar un lote con ventas asociadas.")
-    else:
-        st.info("No hay lotes en el inventario.")
