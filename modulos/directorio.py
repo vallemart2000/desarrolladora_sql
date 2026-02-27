@@ -22,15 +22,13 @@ def render_directorio(supabase):
             tipo = c2.selectbox("Tipo de Contacto", ["Cliente", "Vendedor", "Prospecto", "Socio"])
             
             c3, c4 = st.columns(2)
-            # Ayuda visual para el usuario
             telefono_input = c3.text_input("Teléfono (10 dígitos)", help="Solo números enteros.")
             correo = c4.text_input("Correo Electrónico")
-            
-            notas = st.text_area("Notas o Referencias")
+
+            # Eliminamos el st.text_area de notas/comentarios
 
             if st.form_submit_button("Guardar en Directorio"):
-                # --- VALIDACIÓN DE TELÉFONO ---
-                # Filtramos para dejar solo números por si el usuario pone espacios o guiones
+                # VALIDACIÓN DE TELÉFONO
                 tel_clean = "".join(filter(str.isdigit, telefono_input))
                 
                 if not nombre:
@@ -42,8 +40,7 @@ def render_directorio(supabase):
                         "nombre": nombre.strip(),
                         "tipo": tipo,
                         "telefono": tel_clean,
-                        "correo": correo.strip().lower(),
-                        "notas": notas
+                        "correo": correo.strip().lower()
                     }
                     try:
                         supabase.table("directorio").insert(nuevo_registro).execute()
@@ -65,15 +62,14 @@ def render_directorio(supabase):
             if filtro_tipo:
                 df_view = df_view[df_view['tipo'].isin(filtro_tipo)]
 
-            # Tabla profesional
+            # Tabla profesional (Eliminamos la columna notas)
             st.dataframe(
-                df_view[["nombre", "tipo", "telefono", "correo", "notas"]],
+                df_view[["nombre", "tipo", "telefono", "correo"]],
                 column_config={
                     "nombre": "Nombre",
                     "tipo": "Categoría",
                     "telefono": "Teléfono",
-                    "correo": "Email",
-                    "notas": "Observaciones"
+                    "correo": "Email"
                 },
                 use_container_width=True,
                 hide_index=True
@@ -96,7 +92,6 @@ def render_directorio(supabase):
                     c_btn1, c_btn2 = st.columns(2)
                     
                     if c_btn1.form_submit_button("💾 Actualizar"):
-                        # Misma validación al editar
                         etel_clean = "".join(filter(str.isdigit, etel_input))
                         
                         if len(etel_clean) == 10:
