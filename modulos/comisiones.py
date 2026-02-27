@@ -10,7 +10,7 @@ def render_comisiones(supabase):
     
     # --- 1. CARGA DE DATOS ---
     try:
-        # Traemos ventas con el nombre del vendedor desde el directorio
+        # Traemos ventas: especificamos la relación con directorio usando !vendedor_id
         res_v = supabase.table("ventas").select("""
             precio_venta,
             vendedor:directorio!vendedor_id(id, nombre),
@@ -19,18 +19,20 @@ def render_comisiones(supabase):
         """).execute()
         df_v = pd.DataFrame(res_v.data)
         
-        # Traemos pagos de comisiones realizados
+        # Traemos pagos de comisiones: especificamos la relación con directorio usando !vendedor_id
         res_pc = supabase.table("pagos_comisiones").select("""
-            *,
+            id,
+            vendedor_id,
+            monto,
+            fecha,
+            nota,
             vendedor:directorio!vendedor_id(nombre)
         """).execute()
         df_pc = pd.DataFrame(res_pc.data)
+        
     except Exception as e:
         st.error(f"Error en la base de datos: {e}")
-        return
-
-    if df_v.empty:
-        st.warning("No hay ventas registradas para calcular comisiones.")
+        st.info("💡 Si acabas de ejecutar el SQL, presiona el botón 'Sincronizar Datos' en el menú lateral.")
         return
 
     # --- 2. PROCESAMIENTO ---
