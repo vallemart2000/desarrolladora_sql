@@ -12,10 +12,10 @@ def render_directorio(supabase):
         st.error(f"Error al conectar con el directorio: {e}")
         return
 
-    # --- 2. PESTAÑAS ---
-    tab1, tab2 = st.tabs(["➕ Nuevo Registro", "📋 Ver Directorio"])
+    # --- 2. PESTAÑAS PRINCIPALES ---
+    tab_nuevo, tab_ver = st.tabs(["➕ Nuevo Registro", "📋 Ver Directorio"])
 
-    with tab1:
+    with tab_nuevo:
         with st.form("form_nuevo_registro", clear_on_submit=True):
             c1, c2 = st.columns(2)
             nombre = c1.text_input("Nombre Completo *")
@@ -52,43 +52,63 @@ def render_directorio(supabase):
                             "telefono": tel_clean if tel_clean else None,
                             "correo": correo.strip().lower() if correo.strip() else None
                         }).execute()
-                        st.success(f"✅ {nombre_limpio} guardado."); st.rerun()
+                        st.success(f"✅ {nombre_limpio} guardado.")
+                        st.rerun()
                     except Exception as e: st.error(f"Error: {e}")
 
-    with tab2:
-        if not df.empty:
-            c_f1, c_f2 = st.columns([2, 1])
-            busqueda = c_f1.text_input("🔍 Buscar por nombre...")
-            filtro_tipo = c_f2.multiselect("Filtrar por tipo", df['tipo'].unique())
+    with tab_ver:
+        if df.empty:
+            st.info("El directorio está vacío.")
+        else:
+            # --- SUB-PESTAÑAS PARA SEPARAR CLIENTES Y VENDEDORES ---
+            st.write("### Filtrar por categoría")
+            sub_tab_c, sub_tab_v = st.tabs(["👥 Clientes", "💼 Vendedores"])
 
-            df_view = df.copy()
-            if busqueda:
-                df_view = df_view[df_view['nombre'].str.contains(busqueda, case=False, na=False)]
-            if filtro_tipo:
-                df_view = df_view[df_view['tipo'].isin(filtro_tipo)]
+            # Buscador general (fuera de las sub-pestañas para que afecte a ambas)
+            busqueda = st.text_input("🔍 Buscar por nombre en la lista seleccionada...", key="search_dir")
 
-            st.dataframe(
-                df_view[["nombre", "tipo", "telefono", "correo"]],
-                column_config={"nombre": "Nombre", "tipo": "Categoría", "telefono": "Teléfono", "correo": "Email"},
-                use_container_width=True, hide_index=True
-            )
+            def mostrar_tabla(tipo_filtro):
+                df_filtro = df[df['tipo'] == tipo_filtro].copy()
+                if busqueda:
+                    df_filtro = df_filtro[df_filtro['nombre'].str.contains(busqueda, case=False, na=False)]
+                
+                if df_filtro.empty:
+                    st.warning(f"No se encontraron {tipo_filtro.lower()}s.")
+                else:
+                    st.dataframe(
+                        df_filtro[["nombre", "telefono", "correo"]],
+                        column_config={
+                            "nombre": "Nombre Completo",
+                            "telefono": "Teléfono",
+                            "correo": "Email"
+                        },
+                        use_container_width=True, hide_index=True
+                    )
+                return df_filtro
+
+            with sub_tab_c:
+                df_clientes = mostrar_tabla("Cliente")
+
+            with sub_tab_v:
+                df_vendedores = mostrar_tabla("Vendedor")
 
             st.markdown("---")
-            # --- SECCIÓN DE EDICIÓN SEGURA ---
+            
+            # --- SECCIÓN DE EDICIÓN (Se adapta a lo que el usuario ve) ---
             with st.expander("✏️ Editar o Eliminar del Directorio"):
-                nombres_lista = df_view['nombre'].tolist() if not df_view.empty else df['nombre'].tolist()
-                sel = st.selectbox("Selecciona persona para modificar", ["--"] + nombres_lista)
+                # Unificamos los nombres según lo que se esté buscando para facilitar la selección
+                opciones_edit = df['nombre'].tolist()
+                sel = st.selectbox("Selecciona un registro para modificar:", ["--"] + opciones_edit)
                 
                 if sel != "--":
                     d = df[df['nombre'] == sel].iloc[0]
                     
-                    # FORMULARIO DE EDICIÓN
                     with st.form("edit_dir_secure"):
-                        st.subheader("Modificar Datos")
+                        st.subheader(f"Modificando: {d['nombre']}")
                         col_e1, col_e2 = st.columns(2)
                         enombre = col_e1.text_input("Nombre", value=d['nombre'])
-                        etipo = col_e2.selectbox("Tipo", ["Cliente", "Vendedor", "Prospecto", "Socio"], 
-                                               index=["Cliente", "Vendedor", "Prospecto", "Socio"].index(d['tipo']))
+                        etipo = col_e2.selectbox("Categoría", ["Cliente", "Vendedor"], 
+                                               index=0 if d['tipo'] == "Cliente" else 1)
                         etel_input = col_e1.text_input("Teléfono", value=d['telefono'] if d['telefono'] else "")
                         email = col_e2.text_input("Correo", value=d['correo'] if d['correo'] else "")
                         
@@ -104,18 +124,13 @@ def render_directorio(supabase):
                             except Exception as e: st.error(f"Error: {e}")
 
                     st.markdown("---")
-                    # ZONA DE ELIMINACIÓN CON DOBLE PASO
                     st.subheader("🗑️ Zona de Peligro")
-                    st.write(f"¿Estás seguro de que deseas eliminar a **{d['nombre']}**?")
-                    
-                    confirmar_check = st.checkbox(f"Confirmo que deseo borrar a {d['nombre']} permanentemente.")
+                    confirmar_check = st.checkbox(f"Confirmo que deseo borrar a **{d['nombre']}** permanentemente.")
                     
                     if confirmar_check:
-                        if st.button(f"🗑️ ELIMINAR A {d['nombre'].upper()}", type="primary"):
+                        if st.button(f"ELIMINAR REGISTRO", type="primary", use_container_width=True):
                             try:
                                 supabase.table("directorio").delete().eq("id", d['id']).execute()
-                                st.warning("Registro eliminado definitivamente."); st.rerun()
+                                st.warning("Registro eliminado."); st.rerun()
                             except Exception as e:
-                                st.error("❌ No se puede eliminar: Este contacto está vinculado a ventas o pagos existentes.")
-                    else:
-                        st.info("Para eliminar, marca la casilla de confirmación arriba.")
+                                st.error("❌ No se puede eliminar: El contacto tiene ventas o pagos asociados.")
