@@ -3,113 +3,80 @@ import pandas as pd
 from datetime import datetime
 
 def render_comisiones(supabase):
-    st.title("🎖️ Gestión de Comisiones")
-    
+    st.title("🎖️ Control de Comisiones")
+
     # --- 1. CARGA DE DATOS ---
     try:
-        # Traemos ventas: Ahora incluimos explícitamente 'comision_monto'
-        res_v = supabase.table("ventas").select("""
-            id,
-            comision_monto,
-            vendedor:directorio!vendedor_id(id, nombre),
-            cliente:directorio!cliente_id(nombre),
-            ubicacion:ubicaciones(ubicacion_display)
-        """).execute()
-        df_v = pd.DataFrame(res_v.data)
-        
-        # Traemos pagos de comisiones realizados
-        res_pc = supabase.table("pagos_comisiones").select("""
-            id,
-            vendedor_id,
-            monto,
-            fecha,
-            nota,
+        # Saldos generales desde la vista mágica
+        res_saldos = supabase.table("vista_saldos_comisiones").select("*").execute()
+        df_saldos = pd.DataFrame(res_saldos.data)
+
+        # Historial de pagos realizados
+        res_pagos = supabase.table("comisiones_pagadas").select("""
+            *,
             vendedor:directorio!vendedor_id(nombre)
-        """).execute()
-        df_pc = pd.DataFrame(res_pc.data)
+        """).order("fecha_pago", desc=True).execute()
+        df_historial = pd.DataFrame(res_pagos.data)
         
     except Exception as e:
-        st.error(f"Error en la base de datos: {e}")
+        st.error(f"Error: {e}")
         return
 
-    if df_v.empty:
-        st.warning("No hay ventas registradas para calcular comisiones.")
-        return
+    tab_saldos, tab_pagar, tab_historial = st.tabs(["📊 Saldos", "💸 Registrar Pago", "📜 Historial"])
 
-    # --- 2. PROCESAMIENTO ---
-    # Extraemos datos de los objetos anidados
-    df_v['nombre_vendedor'] = df_v['vendedor'].apply(lambda x: x['nombre'])
-    df_v['vendedor_id'] = df_v['vendedor'].apply(lambda x: x['id'])
-    
-    # IMPORTANTE: Ahora usamos el valor real guardado en la DB
-    df_v['comision_vta'] = df_v['comision_monto'].astype(float)
-    
-    # Agrupamos lo devengado por Vendedor
-    devengado = df_v.groupby(['vendedor_id', 'nombre_vendedor'])['comision_vta'].sum().reset_index()
-    devengado.columns = ['ID', 'Vendedor', 'Total Devengado']
+    with tab_saldos:
+        st.subheader("Resumen de Deudas a Vendedores")
+        if not df_saldos.empty:
+            st.dataframe(
+                df_saldos,
+                column_config={
+                    "vendedor_nombre": "Vendedor",
+                    "comision_total": st.column_config.NumberColumn("Total Generado", format="$%,.2f"),
+                    "comision_pagada": st.column_config.NumberColumn("Total Pagado", format="$%,.2f"),
+                    "saldo_pendiente": st.column_config.NumberColumn("Saldo Pendiente", format="$%,.2f"),
+                },
+                use_container_width=True, hide_index=True
+            )
 
-    # Agrupamos lo pagado
-    if not df_pc.empty:
-        pagado = df_pc.groupby('vendedor_id')['monto'].sum().reset_index()
-        pagado.columns = ['ID', 'Total Pagado']
-        resumen = pd.merge(devengado, pagado, on='ID', how='left').fillna(0)
-    else:
-        resumen = devengado.copy()
-        resumen['Total Pagado'] = 0.0
-
-    resumen['Saldo Pendiente'] = resumen['Total Devengado'] - resumen['Total Pagado']
-
-    # --- 3. MÉTRICAS ---
-    c1, c2, c3 = st.columns(3)
-    total_dev = resumen['Total Devengado'].sum()
-    total_pag = resumen['Total Pagado'].sum()
-    
-    c1.metric("💰 Comisiones Totales", f"$ {total_dev:,.2f}")
-    c2.metric("💸 Total Pagado", f"$ {total_pag:,.2f}")
-    c3.metric("⏳ Pendiente por Pagar", f"$ {resumen['Saldo Pendiente'].sum():,.2f}", 
-              delta=f"{(resumen['Saldo Pendiente'].sum()/total_dev*100):.1f}%" if total_dev > 0 else None,
-              delta_color="inverse")
-
-    st.divider()
-
-    # --- 4. FORMULARIO DE PAGO ---
-    with st.expander("➕ Registrar Pago de Comisión"):
-        with st.form("form_comision", clear_on_submit=True):
-            col_v, col_m, col_f = st.columns(3)
-            v_dict = dict(zip(resumen['Vendedor'], resumen['ID']))
-            v_sel_nombre = col_v.selectbox("Seleccionar Vendedor", list(v_dict.keys()))
+    with tab_pagar:
+        st.subheader("Registrar Salida de Efectivo")
+        vendedores_con_saldo = df_saldos[df_saldos["saldo_pendiente"] > 0]
+        
+        if vendedores_con_saldo.empty:
+            st.success("✅ No hay comisiones pendientes de pago.")
+        else:
+            v_sel = st.selectbox("Seleccione Vendedor:", vendedores_con_saldo["vendedor_nombre"].tolist())
+            datos_v = vendedores_con_saldo[vendedores_con_saldo["vendedor_nombre"] == v_sel].iloc[0]
             
-            row_v = resumen[resumen['Vendedor'] == v_sel_nombre]
-            saldo_sugerido = float(row_v['Saldo Pendiente'].values[0]) if not row_v.empty else 0.0
-            
-            m_pago = col_m.number_input("Monto ($)", min_value=0.0, value=saldo_sugerido, step=100.0)
-            f_pago = col_f.date_input("Fecha de Pago", datetime.now())
-            nota = st.text_input("Nota / Referencia")
-            
-            if st.form_submit_button("Confirmar Pago", type="primary"):
-                try:
-                    supabase.table("pagos_comisiones").insert({
-                        "vendedor_id": int(v_dict[v_sel_nombre]),
-                        "monto": m_pago,
-                        "fecha": str(f_pago),
-                        "nota": nota
-                    }).execute()
-                    st.success("✅ Pago registrado correctamente.")
+            # Tarjeta de diseño Dark Mode
+            st.markdown(f"""
+            <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px; border-left: 5px solid #00C853; border: 1px solid #333;">
+                <p style="color: #808495; margin:0;">SALDO PENDIENTE</p>
+                <h2 style="color: #FFFFFF; margin:0;">$ {datos_v['saldo_pendiente']:,.2f}</h2>
+            </div>
+            """, unsafe_allow_html=True)
+
+            with st.form("form_pago_comision"):
+                c1, c2 = st.columns(2)
+                f_monto = c1.number_input("Monto a Pagar ($)", min_value=0.0, value=float(datos_v['saldo_pendiente']))
+                f_ref = c2.text_input("Referencia (Ej: Transferencia SPEI)")
+                f_com = st.text_area("Notas adicionales")
+                
+                if st.form_submit_button("✅ Registrar Pago de Comisión", type="primary"):
+                    pago_data = {
+                        "vendedor_id": int(datos_v['vendedor_id']),
+                        "monto_pagado": f_monto,
+                        "referencia": f_ref,
+                        "fecha_pago": str(datetime.now().date())
+                    }
+                    supabase.table("comisiones_pagadas").insert(pago_data).execute()
+                    st.success("Pago registrado exitosamente.")
                     st.rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
 
-    # --- 5. VISUALIZACIÓN ---
-    t1, t2 = st.tabs(["📊 Resumen General", "📜 Detalle por Venta"])
-    
-    with t1:
-        st.dataframe(resumen[['Vendedor', 'Total Devengado', 'Total Pagado', 'Saldo Pendiente']], 
-                     use_container_width=True, hide_index=True)
-
-    with t2:
-        df_rank = df_v.copy()
-        df_rank['Lote'] = df_rank['ubicacion'].apply(lambda x: x['ubicacion_display'])
-        df_rank['Cliente'] = df_rank['cliente'].apply(lambda x: x['nombre'])
-        st.dataframe(df_rank[['nombre_vendedor', 'Lote', 'Cliente', 'comision_vta']], 
-                     column_config={"comision_vta": st.column_config.NumberColumn("Comisión ($)", format="$ %.2f")},
-                     use_container_width=True, hide_index=True)
+    with tab_historial:
+        if not df_historial.empty:
+            df_historial['vendedor_nom'] = df_historial['vendedor'].apply(lambda x: x['nombre'])
+            st.dataframe(
+                df_historial[["fecha_pago", "vendedor_nom", "monto_pagado", "referencia"]],
+                use_container_width=True, hide_index=True
+            )
