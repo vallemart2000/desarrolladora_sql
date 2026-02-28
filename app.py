@@ -53,7 +53,7 @@ with st.sidebar:
         ["🏠 Inicio", 
          "📍 Mapa de Lotes", 
          "👤 Directorio", 
-         "📝 Nueva Venta", 
+         "📝 Ventas", 
          "💰 Cobranza", 
          "📊 Detalle de Crédito", 
          "🎖️ Comisiones", 
@@ -81,7 +81,7 @@ try:
     elif menu == "👤 Directorio":
         directorio.render_directorio(supabase)
         
-    elif menu == "📝 Nueva Venta":
+    elif menu == "📝 Ventas":
         ventas.render_ventas(supabase)
         
     elif menu == "💰 Cobranza":
