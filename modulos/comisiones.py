@@ -31,9 +31,9 @@ def render_comisiones(supabase):
                 df_saldos,
                 column_config={
                     "vendedor_nombre": "Vendedor",
-                    "comision_total": st.column_config.NumberColumn("Total Generado", format="$%,.2f"),
-                    "comision_pagada": st.column_config.NumberColumn("Total Pagado", format="$%,.2f"),
-                    "saldo_pendiente": st.column_config.NumberColumn("Saldo Pendiente", format="$%,.2f"),
+                    "comision_total": st.column_config.NumberColumn("Total Generado", format="dollar"),
+                    "comision_pagada": st.column_config.NumberColumn("Total Pagado", format="dollar"),
+                    "saldo_pendiente": st.column_config.NumberColumn("Saldo Pendiente", format="dollar"),
                 },
                 use_container_width=True, hide_index=True
             )
