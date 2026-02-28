@@ -5,21 +5,46 @@ import urllib.parse
 import re
 
 def render_inicio(supabase):
-    # Estilo CSS para tarjetas Dark Mode
+    # --- CSS AVANZADO PARA DARK MODE LIMPIO ---
     st.markdown("""
         <style>
-        [data-testid="stMetricValue"] { font-size: 1.8rem; color: #ffffff; }
-        [data-testid="stMetricLabel"] { color: #808495; }
-        .metric-card {
+        /* Fondo general y eliminación de espacios blancos */
+        .main { background-color: #0E1117; }
+        
+        /* Estilizar métricas para que no parezcan cajas blancas */
+        [data-testid="stMetric"] {
             background-color: #1E2129;
-            padding: 15px;
-            border-radius: 10px;
             border: 1px solid #31333F;
+            padding: 15px 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
+        
+        /* Ajustar texto de métricas */
+        [data-testid="stMetricValue"] { color: #00FFAA !important; font-size: 1.6rem !important; }
+        [data-testid="stMetricLabel"] { color: #A0AEC0 !important; font-weight: 500; }
+
+        /* Estilizar la tabla (Streamlit Dataframe) */
+        .stDataFrame {
+            border: 1px solid #31333F;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        /* Input de búsqueda y Toggles */
+        .stTextInput input {
+            background-color: #1E2129 !important;
+            border: 1px solid #31333F !important;
+            color: white !important;
+            border-radius: 8px;
+        }
+        
+        /* Divisores sutiles */
+        hr { border: 0; border-top: 1px solid #31333F; margin: 2rem 0; }
         </style>
     """, unsafe_allow_html=True)
 
-    st.title("🏠 Panel de Control y Cartera")
+    st.title("🏠 Panel de Control")
 
     # --- 1. CARGA DE DATOS ---
     try:
@@ -28,7 +53,6 @@ def render_inicio(supabase):
             cliente:directorio!cliente_id(nombre, telefono, correo),
             ubicacion:ubicaciones(id, manzana, lote, etapa, precio, enganche_req)
         """).execute()
-        
         res_p = supabase.table("pagos").select("venta_id, monto").execute()
         
         df_v = pd.DataFrame(res_v.data)
@@ -41,60 +65,54 @@ def render_inicio(supabase):
         st.info("👋 El sistema está listo. Comienza registrando una venta.")
         return
 
-    # --- 2. CÁLCULOS Y MÉTRICAS ---
+    # --- 2. MÉTRICAS CON ESTILO ---
     total_recaudado = df_p["monto"].sum() if not df_p.empty else 0.0
     df_v['valor_lote'] = df_v['ubicacion'].apply(lambda x: float(x['precio']) if x else 0.0)
     total_cartera = df_v['valor_lote'].sum()
     
-    # Renderizado de Métricas en Tarjetas
     m1, m2, m3, m4 = st.columns(4)
-    with m1:
-        st.metric("💰 Recaudación", f"$ {total_recaudado:,.2f}")
-    with m2:
-        st.metric("👥 Clientes", df_v['cliente_id'].nunique())
-    with m3:
-        st.metric("📈 Valor Cartera", f"$ {total_cartera:,.2f}")
-    with m4:
-        st.metric("🏗️ Lotes Vendidos", len(df_v))
+    m1.metric("💰 Recaudación", f"$ {total_recaudado:,.0f}")
+    m2.metric("👥 Clientes", df_v['cliente_id'].nunique())
+    m3.metric("📈 Valor Cartera", f"$ {total_cartera:,.0f}")
+    m4.metric("🏗️ Lotes Vendidos", len(df_v))
 
-    st.markdown("---")
+    st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- 3. ANÁLISIS DE MORA ---
+    # --- 3. ANÁLISIS DE CARTERA ---
     pagos_agrupados = df_p.groupby('venta_id')['monto'].sum().reset_index() if not df_p.empty else pd.DataFrame(columns=['venta_id', 'monto'])
     df_cartera = df_v.merge(pagos_agrupados, left_on='id', right_on='venta_id', how='left').fillna({'monto': 0})
     
     hoy = datetime.now()
 
-    def calcular_estado_cuenta(row):
+    def calcular_mora(row):
         try:
             u = row['ubicacion']
-            precio, enganche_req, plazo = float(u['precio']), float(u['enganche_req']), int(row['plazo'] or 12)
-            mensualidad = (precio - enganche_req) / plazo if plazo > 0 else 0
+            precio, enganche, plazo = float(u['precio']), float(u['enganche_req']), int(row['plazo'] or 12)
+            mensualidad = (precio - enganche) / plazo if plazo > 0 else 0
             f_vta = pd.to_datetime(row['fecha_venta'])
-            meses_transcurridos = (hoy.year - f_vta.year) * 12 + (hoy.month - f_vta.month)
+            meses = (hoy.year - f_vta.year) * 12 + (hoy.month - f_vta.month)
+            esperado = enganche + (max(0, meses) * mensualidad)
+            pagado = float(row['monto'])
+            saldo = max(0.0, esperado - pagado)
             
-            deuda_teorica = enganche_req + (max(0, meses_transcurridos) * mensualidad)
-            pagado_real = float(row['monto'])
-            saldo_vencido = max(0.0, deuda_teorica - pagado_real)
-            
-            dias_atraso = 0
-            if saldo_vencido > 100:
-                meses_cubiertos = (pagado_real - enganche_req) / mensualidad if mensualidad > 0 else 0
-                vence = f_vta + pd.DateOffset(months=int(max(0, meses_cubiertos)) + 1)
-                dias_atraso = (hoy - vence).days
-            return pd.Series([max(0, dias_atraso), saldo_vencido])
+            dias = 0
+            if saldo > 100:
+                meses_c = (pagado - enganche) / mensualidad if mensualidad > 0 else 0
+                vence = f_vta + pd.DateOffset(months=int(max(0, meses_c)) + 1)
+                dias = (hoy - vence).days
+            return pd.Series([max(0, dias), saldo])
         except: return pd.Series([0, 0.0])
 
-    df_cartera[['atraso', 'monto_vencido']] = df_cartera.apply(calcular_estado_cuenta, axis=1)
+    df_cartera[['atraso', 'monto_vencido']] = df_cartera.apply(calcular_mora, axis=1)
 
-    # --- 4. INTERFAZ DE COBRANZA ---
-    st.subheader("📋 Gestión de Cobranza")
+    # --- 4. INTERFAZ DE TABLA ---
+    st.subheader("📋 Cobranza y Seguimiento")
     
-    col_f1, col_f2 = st.columns([1, 1])
-    solo_mora = col_f1.toggle("⚠️ Filtrar deudores", value=True)
-    busqueda = col_f2.text_input("🔍 Buscar cliente o lote:", placeholder="Ej. Manzana 2")
+    f1, f2 = st.columns([1, 2])
+    solo_mora = f1.toggle("⚠️ Solo Deudores", value=True)
+    busqueda = f2.text_input("🔍 Filtrar por nombre o lote...")
 
-    df_cartera['Lote'] = df_cartera['ubicacion'].apply(lambda x: f"M{int(x['manzana']):02d}-L{int(x['lote']):02d} (E{x['etapa']})")
+    df_cartera['Lote'] = df_cartera['ubicacion'].apply(lambda x: f"M{int(x['manzana']):02d}-L{int(x['lote']):02d}")
     df_cartera['Cliente'] = df_cartera['cliente'].apply(lambda x: x['nombre'] if x else "N/A")
     
     df_viz = df_cartera.copy()
@@ -104,37 +122,25 @@ def render_inicio(supabase):
 
     if not df_viz.empty:
         df_viz = df_viz.sort_values("atraso", ascending=False)
-        
-        # Formateo de Estatus con colores para Dark Mode
-        def style_status(atraso):
-            if atraso > 60: return "🔴 Crítico (+60)"
-            if atraso > 0: return "🟡 Mora"
-            return "🟢 Al día"
-        
-        df_viz['Estatus'] = df_viz['atraso'].apply(style_status)
+        df_viz['Estatus'] = df_viz['atraso'].apply(lambda x: "🔴 Crítico" if x > 60 else ("🟡 Mora" if x > 0 else "🟢 Al día"))
 
-        def generar_wa(row):
-            try:
-                tel = re.sub(r'\D', '', str(row['cliente']['telefono']))
-                tel_f = tel if tel.startswith("52") else "52" + tel
-                msg = (f"Hola {row['Cliente']}, te contactamos de Valle Mart. 📲 "
-                       f"Tu lote {row['Lote']} presenta un saldo pendiente de ${row['monto_vencido']:,.2f}. "
-                       f"¿Podrías apoyarnos con tu comprobante?")
-                return f"https://wa.me/{tel_f}?text={urllib.parse.quote(msg)}"
-            except: return None
+        def get_wa(row):
+            tel = re.sub(r'\D', '', str(row['cliente']['telefono']))
+            tel_f = tel if tel.startswith("52") else "52" + tel
+            msg = f"Hola {row['Cliente']}, te contactamos de Valle Mart por tu lote {row['Lote']}. Saldo: ${row['monto_vencido']:,.2f}."
+            return f"https://wa.me/{tel_f}?text={urllib.parse.quote(msg)}"
         
-        df_viz['WhatsApp'] = df_viz.apply(generar_wa, axis=1)
+        df_viz['WhatsApp'] = df_viz.apply(get_wa, axis=1)
 
-        # Configuración de tabla optimizada para Dark Mode
         st.dataframe(
             df_viz[["Estatus", "Lote", "Cliente", "atraso", "monto_vencido", "WhatsApp"]],
             column_config={
-                "atraso": st.column_config.NumberColumn("Días", help="Días de atraso"),
-                "monto_vencido": st.column_config.NumberColumn("Deuda", format="$ %,.2f"),
-                "WhatsApp": st.column_config.LinkColumn("📲 Contacto", display_text="Enviar WA")
+                "atraso": st.column_config.NumberColumn("Días", format="%d d"),
+                "monto_vencido": st.column_config.NumberColumn("Saldo", format="$ %,.2f"),
+                "WhatsApp": st.column_config.LinkColumn("Acción", display_text="📲 Cobrar")
             },
             use_container_width=True, 
             hide_index=True
         )
     else:
-        st.success("🎉 Cartera al corriente.")
+        st.success("🎉 Sin adeudos pendientes.")
