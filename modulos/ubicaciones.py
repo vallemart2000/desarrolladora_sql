@@ -63,7 +63,7 @@ def render_ubicaciones(supabase):
                     "lote": "Lt",
                     "etapa": "Etapa",
                     "precio_lista": st.column_config.NumberColumn("Precio Lista", format="dollar"),
-                    "enganche_req": st.column_config.NumberColumn("Enganche Req.", format="$%.2f"),
+                    "enganche_req": st.column_config.NumberColumn("Enganche Req.", format="dollar"),
                     "estatus_actual": "Estatus"
                 },
                 use_container_width=True,
