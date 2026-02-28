@@ -136,7 +136,7 @@ def render_inicio(supabase):
             df_viz[["Estatus", "Lote", "Cliente", "atraso", "monto_vencido", "WhatsApp"]],
             column_config={
                 "atraso": st.column_config.NumberColumn("Días", format="%d d"),
-                "monto_vencido": st.column_config.NumberColumn("Saldo", format="$ %,.2f"),
+                "monto_vencido": st.column_config.NumberColumn("Saldo", format="dollar"),
                 "WhatsApp": st.column_config.LinkColumn("Acción", display_text="📲 Cobrar")
             },
             use_container_width=True, 
