@@ -40,10 +40,8 @@ def render_ventas(supabase):
         if lotes_libres.empty:
             st.warning("No hay lotes disponibles.")
         else:
-            # Preparamos la tabla para selección
             lotes_libres['Ref'] = lotes_libres.apply(lambda x: f"M{int(x['manzana']):02d}-L{int(x['lote']):02d}", axis=1)
             
-            # Configuramos la tabla de selección
             event = st.dataframe(
                 lotes_libres[["Ref", "etapa", "precio_lista", "enganche_req"]],
                 column_config={
@@ -54,33 +52,38 @@ def render_ventas(supabase):
                 },
                 use_container_width=True,
                 hide_index=True,
-                on_select="rerun", # <--- Aquí ocurre la magia
+                on_select="rerun",
                 selection_mode="single-row"
             )
 
-            # Verificamos si hay una fila seleccionada
             if len(event.selection.rows) > 0:
                 idx_seleccionado = event.selection.rows[0]
                 row_u = lotes_libres.iloc[idx_seleccionado]
                 
                 st.markdown("---")
-                st.subheader(f"2. Registrar Venta: {row_u['Ref']}")
+                st.subheader(f"2. Formulario de Registro: {row_u['Ref']}")
 
-                with st.form("form_nueva_venta"):
-                    c1, c2 = st.columns(2)
-                    f_fec = c1.date_input("📅 Fecha de Registro", value=datetime.now())
-                    f_vende_sel = c1.selectbox("👔 Vendedor", ["--"] + df_dir[df_dir["tipo"] == "Vendedor"]["nombre"].tolist())
-                    f_cli_sel = c2.selectbox("👤 Cliente", ["--"] + df_dir[df_dir["tipo"] == "Cliente"]["nombre"].tolist())
-                    
+                with st.form("form_nueva_venta", clear_on_submit=True):
+                    # 1 y 2. Cliente y Vendedor
+                    col_pers = st.columns(2)
+                    f_cli_sel = col_pers[0].selectbox("👤 1. Cliente", ["--"] + df_dir[df_dir["tipo"] == "Cliente"]["nombre"].tolist())
+                    f_vende_sel = col_pers[1].selectbox("👔 2. Vendedor", ["--"] + df_dir[df_dir["tipo"] == "Vendedor"]["nombre"].tolist())
+
+                    # 3, 4 y 5. Precio, Plazo y Comisión
+                    st.markdown(" ")
+                    col_money = st.columns(3)
+                    f_tot = col_money[0].number_input("💰 3. Precio Pactado ($)", min_value=0.0, value=float(row_u['precio_lista']), format="%.2f")
+                    f_plazo = col_money[1].number_input("📅 4. Plazo (Meses)", min_value=1, max_value=240, value=48, step=1)
+                    f_comision = col_money[2].number_input("💸 5. Comisión ($)", min_value=0.0, value=5000.0, step=500.0, format="%.2f")
+
+                    # 6. Fecha (Al final para mejor visualización del calendario)
+                    st.markdown(" ")
+                    f_fec = st.date_input("🗓️ 6. Fecha de Registro / Contrato", value=datetime.now())
+
                     st.markdown("---")
-                    cf1, cf2, cf3 = st.columns(3)
-                    f_tot = cf1.number_input("Precio Pactado ($)", min_value=0.0, value=float(row_u['precio_lista']))
-                    f_plazo = cf2.number_input("Plazo (Meses)", min_value=1, max_value=240, value=36, step=1)
-                    f_comision = cf3.number_input("Comisión ($)", min_value=0.0, value=5000.0, step=500.0)
-                    
-                    if st.form_submit_button("💾 REGISTRAR APARTADO", type="primary", use_container_width=True):
+                    if st.form_submit_button("💾 FINALIZAR Y GUARDAR APARTADO", type="primary", use_container_width=True):
                         if f_cli_sel == "--" or f_vende_sel == "--":
-                            st.error("❌ Complete los datos de Cliente y Vendedor.")
+                            st.error("❌ Por favor, seleccione un Cliente y un Vendedor.")
                         else:
                             id_cliente = int(df_dir[df_dir["nombre"] == f_cli_sel]["id"].iloc[0])
                             id_vendedor = int(df_dir[df_dir["nombre"] == f_vende_sel]["id"].iloc[0])
@@ -91,53 +94,46 @@ def render_ventas(supabase):
                                 "vendedor_id": id_vendedor,
                                 "fecha_venta": str(f_fec),
                                 "comision_monto": f_comision,
-                                "plazo": int(f_plazo)
+                                "plazo": int(f_plazo),
+                                "precio_final": f_tot # Asegúrate de tener esta columna o cámbiala por la que uses
                             }
                             try:
                                 supabase.table("ventas").insert(nueva_v_data).execute()
-                                st.success("✅ Registro exitoso.")
+                                st.success(f"✅ ¡Venta de {row_u['Ref']} registrada exitosamente!")
                                 st.rerun()
                             except Exception as e: 
-                                st.error(f"Error: {e}")
+                                st.error(f"Error al insertar en base de datos: {e}")
             else:
-                st.info("👆 Haga clic en una fila de la tabla de arriba para iniciar el registro.")
+                st.info("💡 Selecciona un lote en la tabla de arriba para habilitar el formulario.")
 
-    # --- PESTAÑA 2: EDITOR (Se mantiene igual) ---
+    # --- PESTAÑAS 2 Y 3 (Se mantienen con el formato dollar en tablas) ---
     with tab_editar:
-        st.subheader("Modificar Contrato Existente")
         if df_v.empty:
-            st.info("No hay ventas para editar.")
+            st.info("No hay ventas registradas.")
         else:
             df_v['edit_label'] = df_v.apply(lambda x: f"{x['display_lote']} - {x['cliente']['nombre']}", axis=1)
-            edit_sel = st.selectbox("Seleccione Contrato", ["--"] + df_v["edit_label"].tolist())
+            edit_sel = st.selectbox("Seleccione Contrato para modificar", ["--"] + df_v["edit_label"].tolist())
             
             if edit_sel != "--":
                 datos_v = df_v[df_v["edit_label"] == edit_sel].iloc[0]
                 with st.form("form_edit_vta"):
-                    st.warning(f"Editando Lote: {datos_v['display_lote']}")
+                    st.warning(f"Modificando Lote: {datos_v['display_lote']}")
                     ce1, ce2 = st.columns(2)
-                    e_plazo = ce1.number_input("Ajustar Plazo (Meses)", value=int(datos_v.get("plazo", 36)))
-                    e_com = ce2.number_input("Ajustar Comisión ($)", value=float(datos_v.get("comision_monto", 0.0)))
-                    if st.form_submit_button("💾 ACTUALIZAR"):
-                        supabase.table("ventas").update({
-                            "comision_monto": e_com,
-                            "plazo": e_plazo
-                        }).eq("id", datos_v['id']).execute()
-                        st.success("Cambios guardados."); st.rerun()
+                    e_plazo = ce1.number_input("Ajustar Plazo", value=int(datos_v.get("plazo", 48)))
+                    e_com = ce2.number_input("Ajustar Comisión ($)", value=float(datos_v.get("comision_monto", 5000.0)), format="%.2f")
+                    if st.form_submit_button("💾 GUARDAR CAMBIOS"):
+                        supabase.table("ventas").update({"comision_monto": e_com, "plazo": e_plazo}).eq("id", datos_v['id']).execute()
+                        st.success("Contrato actualizado."); st.rerun()
 
-    # --- PESTAÑA 3: HISTORIAL (Se mantiene igual) ---
     with tab_lista:
         if not df_v.empty:
-            st.subheader("📋 Ventas Activas")
-            df_historial = df_v.copy()
-            df_historial['vendedor_nom'] = df_historial['vendedor'].apply(lambda x: x['nombre'] if x else 'N/A')
             st.dataframe(
-                df_historial[["display_lote", "fecha_venta", "plazo", "comision_monto"]],
+                df_v[["display_lote", "fecha_venta", "plazo", "comision_monto"]],
                 column_config={
                     "display_lote": "Lote",
-                    "fecha_venta": "Fecha",
-                    "plazo": st.column_config.NumberColumn("Plazo (meses)"),
-                    "comision_monto": st.column_config.NumberColumn("Comisión", format="$%,.2f"),
+                    "fecha_venta": "Fecha Venta",
+                    "plazo": "Meses",
+                    "comision_monto": st.column_config.NumberColumn("Comisión", format="dollar"),
                 },
                 use_container_width=True, hide_index=True
             )
