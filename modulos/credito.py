@@ -137,9 +137,9 @@ def render_detalle_credito(supabase):
         st.dataframe(
             pd.DataFrame(datos_amort),
             column_config={
-                "Cuota": st.column_config.NumberColumn(format="$ %.2f"),
-                "Abonado": st.column_config.NumberColumn(format="$ %.2f"),
-                "Saldo": st.column_config.NumberColumn(format="$ %.2f"),
+                "Cuota": st.column_config.NumberColumn(format="dollar"),
+                "Abonado": st.column_config.NumberColumn(format="dollar"),
+                "Saldo": st.column_config.NumberColumn(format="dollar"),
                 "Estatus": st.column_config.TextColumn("Estatus")
             },
             use_container_width=True,
