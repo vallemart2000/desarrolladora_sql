@@ -8,7 +8,6 @@ def render_cobranza(supabase):
     
     # --- 1. CARGA DE DATOS ---
     try:
-        # Traemos ventas con sus relaciones
         res_v = supabase.table("ventas").select("""
             id, ubicacion_id, cliente_id, plazo,
             cliente:directorio!cliente_id(nombre),
@@ -16,7 +15,6 @@ def render_cobranza(supabase):
         """).execute()
         df_v = pd.DataFrame(res_v.data)
         
-        # Traemos pagos
         res_p = supabase.table("pagos").select("*").order("fecha", desc=True).execute()
         df_p = pd.DataFrame(res_p.data)
 
@@ -30,14 +28,13 @@ def render_cobranza(supabase):
         st.error(f"⚠️ Error cargando datos: {e}")
         return
 
-    tab_pago, tab_historial = st.tabs(["💵 Registrar Pago", "📋 Historial"])
+    tab_pago, tab_historial = st.tabs(["💵 Registrar Pago", "📋 Historial y Edición"])
 
     # --- PESTAÑA 1: REGISTRAR PAGO ---
     with tab_pago:
         if df_v.empty:
             st.warning("No hay ventas registradas.")
         else:
-            # Usamos un key para el selectbox para poder resetearlo indirectamente
             seleccion = st.selectbox(
                 "🔍 Seleccione Lote / Cliente:", 
                 ["--"] + df_v["display_vta"].tolist(),
@@ -49,13 +46,10 @@ def render_cobranza(supabase):
                 venta_id_real = int(v['id'])
                 ubicacion_id_real = int(v['ubicacion_id'])
                 
-                # RE-CONSULTA CRÍTICA: Traemos el estatus más reciente para evitar datos viejos
                 res_status = supabase.table("vista_estatus_lotes").select("*").eq("ubicacion_id", ubicacion_id_real).execute()
                 
                 if res_status.data:
                     status = res_status.data[0]
-                    
-                    # --- CÁLCULOS ---
                     precio_total = float(v['ubicacion']['precio'] or 0)
                     eng_req = float(v['ubicacion']['enganche_req'] or 0)
                     total_pagado = float(status.get('total_pagado') or 0)
@@ -67,7 +61,6 @@ def render_cobranza(supabase):
                     mensualidad = monto_a_financiar / plazo_real if plazo_real > 0 else 0
                     pago_sugerido = faltante_eng if faltante_eng > 0 else mensualidad
 
-                    # --- UI DE ESTADO MEJORADA ---
                     st.markdown(f"""
                     <div style="background-color: #1E1E1E; padding: 20px; border-radius: 12px; border: 1px solid #333; margin-bottom: 20px;">
                         <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -93,53 +86,98 @@ def render_cobranza(supabase):
                     </div>
                     """, unsafe_allow_html=True)
 
-                    # Formulario con clear_on_submit=True para limpiar campos automáticamente
                     with st.form("form_pago_final", clear_on_submit=True):
                         st.write("📝 **Detalles del Cobro**")
                         c1, c2 = st.columns(2)
-                        f_fol = c1.text_input("Folio Recibo / Referencia", placeholder="Ej: REC-1024")
-                        f_mon = c2.number_input("Monto a Recibir ($)", min_value=0.0, value=float(pago_sugerido), step=100.0)
-                        f_com = st.text_area("Comentarios", placeholder="Abono correspondiente a...")
+                        f_fol = c1.text_input("Folio Recibo / Referencia")
+                        f_mon = c2.number_input("Monto a Recibir ($)", min_value=0.0, value=float(pago_sugerido))
+                        f_com = st.text_area("Comentarios")
                         
-                        btn_confirmar = st.form_submit_button("✅ REGISTRAR PAGO AHORA", type="primary", use_container_width=True)
-                        
-                        if btn_confirmar:
-                            if f_mon <= 0:
-                                st.error("❌ El monto debe ser mayor a 0")
-                            else:
-                                try:
-                                    # 1. Insertar pago
-                                    supabase.table("pagos").insert({
-                                        "venta_id": venta_id_real,
-                                        "monto": f_mon,
-                                        "fecha": str(datetime.now().date()),
-                                        "folio": f_fol,
-                                        "comentarios": f_com
-                                    }).execute()
-                                    
-                                    # 2. Notificación Visual Impactante
-                                    st.toast(f"✅ ¡Pago de ${f_mon:,.2f} registrado con éxito!", icon="💰")
-                                    st.success(f"🎊 EXCELENTE: Se registró el pago con folio {f_fol}. Los datos se han actualizado.")
-                                    
-                                    # 3. Pequeña pausa para que el usuario vea el éxito antes del rerun
-                                    time.sleep(1.5)
-                                    st.rerun()
-                                    
-                                except Exception as e:
-                                    st.error(f"❌ Error al registrar: {e}")
+                        if st.form_submit_button("✅ REGISTRAR PAGO AHORA", type="primary", use_container_width=True):
+                            try:
+                                supabase.table("pagos").insert({
+                                    "venta_id": venta_id_real, "monto": f_mon,
+                                    "fecha": str(datetime.now().date()), "folio": f_fol, "comentarios": f_com
+                                }).execute()
+                                st.toast("💰 Pago registrado!")
+                                time.sleep(1)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
 
-    # --- PESTAÑA 2: HISTORIAL ---
+    # --- PESTAÑA 2: HISTORIAL, MODIFICAR Y ELIMINAR ---
     with tab_historial:
-        if not df_p.empty:
-            df_show = df_p.merge(df_v[['id', 'display_vta']], left_on='venta_id', right_on='id', how='left')
+        if df_p.empty:
+            st.info("No hay historial de pagos.")
+        else:
+            # Preparamos los datos para la tabla y el buscador
+            df_historial = df_p.merge(df_v[['id', 'display_vta']], left_on='venta_id', right_on='id', how='left')
+            
+            st.subheader("📋 Registro de Movimientos")
+            
+            # Buscador rápido
+            search = st.text_input("🔍 Buscar por folio o cliente:", placeholder="Escriba para filtrar...")
+            if search:
+                df_historial = df_historial[
+                    df_historial['display_vta'].str.contains(search, case=False) | 
+                    df_historial['folio'].str.contains(search, case=False)
+                ]
+
+            # Mostramos la tabla principal
             st.dataframe(
-                df_show[['fecha', 'display_vta', 'monto', 'folio', 'comentarios']],
-                column_config={
-                    "display_vta": "Lote / Cliente",
-                    "monto": st.column_config.NumberColumn("Importe", format="$%,.2f"),
-                    "fecha": "Fecha de Cobro",
-                    "folio": "Recibo/Ref"
-                },
-                use_container_width=True, 
-                hide_index=True
+                df_historial[['fecha', 'display_vta', 'monto', 'folio', 'comentarios']],
+                use_container_width=True, hide_index=True
             )
+
+            st.markdown("---")
+            st.subheader("✏️ Modificar o Eliminar un Pago")
+            
+            # Selector para elegir qué pago editar
+            df_historial['select_label'] = df_historial.apply(lambda x: f"Folio: {x['folio']} | {x['display_vta']} | ${x['monto']:,.2f} ({x['fecha']})", axis=1)
+            pago_a_editar = st.selectbox("Seleccione el pago que desea corregir:", ["--"] + df_historial['select_label'].tolist())
+
+            if pago_a_editar != "--":
+                # Extraer datos del pago seleccionado
+                pago_data = df_historial[df_historial['select_label'] == pago_a_editar].iloc[0]
+                
+                col_edit, col_del = st.columns([2, 1])
+                
+                with col_edit:
+                    with st.expander("📝 Editar Información", expanded=True):
+                        with st.form("form_edit_pago"):
+                            e_fol = st.text_input("Editar Folio", value=pago_data['folio'])
+                            e_mon = st.number_input("Editar Monto ($)", value=float(pago_data['monto']))
+                            e_fec = st.date_input("Editar Fecha", value=datetime.strptime(pago_data['fecha'], '%Y-%m-%d'))
+                            e_com = st.text_area("Editar Comentarios", value=pago_data['comentarios'])
+                            
+                            if st.form_submit_button("💾 Guardar Cambios", use_container_width=True):
+                                try:
+                                    supabase.table("pagos").update({
+                                        "folio": e_fol, "monto": e_mon,
+                                        "fecha": str(e_fec), "comentarios": e_com
+                                    }).eq("id", pago_data['id']).execute()
+                                    st.success("Actualizado con éxito")
+                                    time.sleep(1)
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error: {e}")
+
+                with col_del:
+                    with st.expander("🚨 Zona de Peligro", expanded=True):
+                        st.write("Esta acción no se puede deshacer.")
+                        if st.button("🗑️ ELIMINAR PAGO", type="secondary", use_container_width=True):
+                            # Usamos un modal de confirmación nativo de Streamlit si está disponible, 
+                            # si no, una doble verificación simple
+                            st.session_state.confirm_delete = True
+                        
+                        if st.session_state.get('confirm_delete'):
+                            st.warning("¿Está seguro de borrar este registro?")
+                            if st.button("SÍ, BORRAR DEFINITIVAMENTE", type="primary", use_container_width=True):
+                                try:
+                                    supabase.table("pagos").delete().eq("id", pago_data['id']).execute()
+                                    st.toast("Pago eliminado correctamente")
+                                    st.session_state.confirm_delete = False
+                                    time.sleep(1)
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error: {e}")
