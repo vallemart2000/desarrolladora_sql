@@ -7,11 +7,9 @@ def render_comisiones(supabase):
 
     # --- 1. CARGA DE DATOS ---
     try:
-        # Saldos generales desde la vista mágica
         res_saldos = supabase.table("vista_saldos_comisiones").select("*").execute()
         df_saldos = pd.DataFrame(res_saldos.data)
 
-        # Historial de pagos realizados
         res_pagos = supabase.table("comisiones_pagadas").select("""
             *,
             vendedor:directorio!vendedor_id(nombre)
@@ -22,25 +20,41 @@ def render_comisiones(supabase):
         st.error(f"Error: {e}")
         return
 
+    # --- 2. FILTRO DE APAGADOR (TOGGLE) ---
+    # Lo colocamos en una columna pequeña para que no use mucho espacio
+    col_t, col_s = st.columns([1, 2])
+    solo_pendientes = col_t.toggle("Ver solo saldos pendientes", value=True)
+
+    # Aplicamos la lógica del filtro al DataFrame de saldos
+    df_saldos_filtered = df_saldos.copy()
+    if solo_pendientes and not df_saldos.empty:
+        df_saldos_filtered = df_saldos[df_saldos["saldo_pendiente"] > 0.01]
+
+    # --- 3. TABS ---
     tab_saldos, tab_pagar, tab_historial = st.tabs(["📊 Saldos", "💸 Registrar Pago", "📜 Historial"])
 
     with tab_saldos:
         st.subheader("Resumen de Deudas a Vendedores")
-        if not df_saldos.empty:
+        if not df_saldos_filtered.empty:
             st.dataframe(
-                df_saldos,
+                df_saldos_filtered,
                 column_config={
                     "vendedor_nombre": "Vendedor",
-                    "comision_total": st.column_config.NumberColumn("Total Generado", format="dollar"),
-                    "comision_pagada": st.column_config.NumberColumn("Total Pagado", format="dollar"),
-                    "saldo_pendiente": st.column_config.NumberColumn("Saldo Pendiente", format="dollar"),
+                    # Usamos el formato infalible con comas de miles
+                    "comision_total": st.column_config.NumberColumn("Total Generado", format="$%,.2f"),
+                    "comision_pagada": st.column_config.NumberColumn("Total Pagado", format="$%,.2f"),
+                    "saldo_pendiente": st.column_config.NumberColumn("Saldo Pendiente", format="$%,.2f"),
                 },
-                use_container_width=True, hide_index=True
+                use_container_width=True, 
+                hide_index=True
             )
+        else:
+            st.info("No hay registros que coincidan con el filtro seleccionado.")
 
     with tab_pagar:
         st.subheader("Registrar Salida de Efectivo")
-        vendedores_con_saldo = df_saldos[df_saldos["saldo_pendiente"] > 0]
+        # Aquí siempre filtramos por > 0 porque no tiene sentido pagar a quien no se le debe
+        vendedores_con_saldo = df_saldos[df_saldos["saldo_pendiente"] > 0.01]
         
         if vendedores_con_saldo.empty:
             st.success("✅ No hay comisiones pendientes de pago.")
@@ -48,35 +62,52 @@ def render_comisiones(supabase):
             v_sel = st.selectbox("Seleccione Vendedor:", vendedores_con_saldo["vendedor_nombre"].tolist())
             datos_v = vendedores_con_saldo[vendedores_con_saldo["vendedor_nombre"] == v_sel].iloc[0]
             
-            # Tarjeta de diseño Dark Mode
+            # Tarjeta Dark Mode mejorada
             st.markdown(f"""
-            <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px; border-left: 5px solid #00C853; border: 1px solid #333;">
-                <p style="color: #808495; margin:0;">SALDO PENDIENTE</p>
+            <div style="background-color: #1E2129; padding: 20px; border-radius: 10px; border-left: 5px solid #4CAF50; border: 1px solid #31333F;">
+                <p style="color: #808495; margin:0; font-size: 0.8rem;">SALDO PENDIENTE PARA {v_sel.upper()}</p>
                 <h2 style="color: #FFFFFF; margin:0;">$ {datos_v['saldo_pendiente']:,.2f}</h2>
             </div>
             """, unsafe_allow_html=True)
+            st.write("") # Espaciador
 
-            with st.form("form_pago_comision"):
+            with st.form("form_pago_comision", clear_on_submit=True):
                 c1, c2 = st.columns(2)
-                f_monto = c1.number_input("Monto a Pagar ($)", min_value=0.0, value=float(datos_v['saldo_pendiente']))
-                f_ref = c2.text_input("Referencia (Ej: Transferencia SPEI)")
-                f_com = st.text_area("Notas adicionales")
+                f_monto = c1.number_input("Monto a Pagar ($)", min_value=0.0, max_value=float(datos_v['saldo_pendiente']), value=float(datos_v['saldo_pendiente']))
+                f_ref = c2.text_input("Referencia", placeholder="Ej: SPEI Banamex")
+                f_com = st.text_area("Notas / Concepto")
                 
-                if st.form_submit_button("✅ Registrar Pago de Comisión", type="primary"):
+                if st.form_submit_button("🚀 Confirmar Pago", type="primary"):
                     pago_data = {
                         "vendedor_id": int(datos_v['vendedor_id']),
                         "monto_pagado": f_monto,
                         "referencia": f_ref,
                         "fecha_pago": str(datetime.now().date())
                     }
-                    supabase.table("comisiones_pagadas").insert(pago_data).execute()
-                    st.success("Pago registrado exitosamente.")
-                    st.rerun()
+                    try:
+                        supabase.table("comisiones_pagadas").insert(pago_data).execute()
+                        st.success(f"¡Pago de ${f_monto:,.2f} registrado para {v_sel}!")
+                        st.balloons()
+                        # El rerun es necesario para actualizar la vista_saldos_comisiones
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al registrar: {e}")
 
     with tab_historial:
         if not df_historial.empty:
-            df_historial['vendedor_nom'] = df_historial['vendedor'].apply(lambda x: x['nombre'])
+            # Limpiamos el nombre del vendedor para la tabla
+            df_historial['Vendedor'] = df_historial['vendedor'].apply(lambda x: x['nombre'] if x else "N/A")
             st.dataframe(
-                df_historial[["fecha_pago", "vendedor_nom", "monto_pagado", "referencia"]],
-                use_container_width=True, hide_index=True
+                df_historial,
+                column_config={
+                    "fecha_pago": "Fecha",
+                    "Vendedor": "Vendedor",
+                    "monto_pagado": st.column_config.NumberColumn("Monto", format="$%,.2f"),
+                    "referencia": "Referencia"
+                },
+                use_container_width=True, 
+                hide_index=True,
+                column_order=("fecha_pago", "Vendedor", "monto_pagado", "referencia")
             )
+        else:
+            st.info("Aún no se han registrado pagos de comisiones.")
