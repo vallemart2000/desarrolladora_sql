@@ -7,6 +7,7 @@ def render_cobranza(supabase):
     
     # --- 1. CARGA DE DATOS ---
     try:
+        # Ahora incluimos 'plazo' en la consulta de ventas
         res_v = supabase.table("ventas").select("""
             id, ubicacion_id, cliente_id, plazo,
             cliente:directorio!cliente_id(nombre),
@@ -39,30 +40,32 @@ def render_cobranza(supabase):
             if seleccion != "--":
                 v = df_v[df_v['display_vta'] == seleccion].iloc[0]
                 
-                # Consultamos datos financieros detallados
+                # Consultamos la vista de estatus para ver pagos acumulados
                 res_status = supabase.table("vista_estatus_lotes").select("*").eq("ubicacion_id", v['ubicacion_id']).execute()
                 
                 if res_status.data:
                     status = res_status.data[0]
                     
-                    # Cálculos Financieros
+                    # --- CÁLCULOS FINANCIEROS REALES ---
                     precio_total = float(v['ubicacion']['precio'] or 0)
                     eng_req = float(v['ubicacion']['enganche_req'] or 0)
                     total_pagado = float(status.get('total_pagado') or 0)
-                    plazo = int(v.get('plazo') or 1)
+                    plazo_real = int(v.get('plazo') or 1) # Usamos el plazo de la BD
                     
-                    # Lógica de saldos
+                    # 1. Saldo de Enganche
                     faltante_eng = max(0.0, eng_req - total_pagado)
+                    
+                    # 2. Saldo Total del Contrato
                     saldo_total = max(0.0, precio_total - total_pagado)
                     
-                    # Mensualidad estimada (Precio - Enganche) / Plazo
+                    # 3. Mensualidad Real (Saldo después de enganche / Plazo)
                     monto_a_financiar = precio_total - eng_req
-                    mensualidad = monto_a_financiar / plazo if plazo > 0 else 0
+                    mensualidad = monto_a_financiar / plazo_real if plazo_real > 0 else 0
                     
-                    # Sugerencia de pago: Si debe enganche, sugiere el enganche. Si no, la mensualidad.
+                    # 4. Sugerencia de Pago Inteligente
                     pago_sugerido = faltante_eng if faltante_eng > 0 else mensualidad
 
-                    # --- DISEÑO DE TARJETA PROFESIONAL (Grid System) ---
+                    # --- DISEÑO DE TARJETA PROFESIONAL ---
                     st.markdown(f"""
                     <div style="
                         background-color: #1E1E1E; 
@@ -77,41 +80,42 @@ def render_cobranza(supabase):
                                 <h3 style="color: {'#FF4B4B' if faltante_eng > 0 else '#00C853'}; margin: 5px 0 0 0; font-size: 1.5rem;">$ {faltante_eng:,.2f}</h3>
                             </div>
                             <div>
-                                <p style="color: #808495; margin: 0; font-size: 0.75rem; font-weight: 700; text-transform: uppercase;">Saldo Restante Total</p>
+                                <p style="color: #808495; margin: 0; font-size: 0.75rem; font-weight: 700; text-transform: uppercase;">Saldo Pendiente Total</p>
                                 <h3 style="color: #FFFFFF; margin: 5px 0 0 0; font-size: 1.5rem;">$ {saldo_total:,.2f}</h3>
                             </div>
                             <div>
-                                <p style="color: #808495; margin: 0; font-size: 0.75rem; font-weight: 700; text-transform: uppercase;">Mensualidad Pactada</p>
+                                <p style="color: #808495; margin: 0; font-size: 0.75rem; font-weight: 700; text-transform: uppercase;">Mensualidad ({plazo_real} m)</p>
                                 <h3 style="color: #FFFFFF; margin: 5px 0 0 0; font-size: 1.5rem;">$ {mensualidad:,.2f}</h3>
                             </div>
                         </div>
                         <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #333; display: flex; align-items: center;">
                             <span style="background-color: #2E7D32; color: white; padding: 4px 12px; border-radius: 20px; font-size: 0.7rem; font-weight: bold; margin-right: 10px;">SUGERENCIA</span>
-                            <p style="color: #00C853; margin: 0; font-size: 0.9rem;">Aplicar pago de <b>$ {pago_sugerido:,.2f}</b> para estar al corriente.</p>
+                            <p style="color: #00C853; margin: 0; font-size: 0.9rem;">
+                                {'🎯 Cobrar saldo de enganche' if faltante_eng > 0 else '📅 Cobrar mensualidad corriente'}: <b>$ {pago_sugerido:,.2f}</b>
+                            </p>
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
 
                     with st.form("form_pago_final"):
                         c1, c2 = st.columns(2)
-                        f_fol = c1.text_input("Folio Físico / Recibo", placeholder="Ej: REC-101")
+                        f_fol = c1.text_input("Folio Físico / Recibo", placeholder="Ej: REC-001")
                         f_mon = c2.number_input("Monto a Recibir ($)", min_value=0.0, value=float(pago_sugerido), step=100.0)
-                        f_com = st.text_area("Comentarios del pago (Ej: Abono a cuenta, Liquidación enganche)")
+                        f_com = st.text_area("Comentarios del pago", placeholder="Ej: Abono a mensualidad 1 de 36...")
                         
-                        if st.form_submit_button("✅ Registrar e Imprimir Comprobante", type="primary", use_container_width=True):
-                            pago_data = {
-                                "venta_id": int(v['id']),
-                                "monto": f_mon,
-                                "fecha": str(datetime.now().date()),
-                                "folio": f_fol,
-                                "comentarios": f_com
-                            }
+                        if st.form_submit_button("✅ Registrar Pago", type="primary", use_container_width=True):
                             try:
-                                supabase.table("pagos").insert(pago_data).execute()
-                                st.success(f"✅ Pago de ${f_mon:,.2f} registrado correctamente.")
+                                supabase.table("pagos").insert({
+                                    "venta_id": int(v['id']),
+                                    "monto": f_mon,
+                                    "fecha": str(datetime.now().date()),
+                                    "folio": f_fol,
+                                    "comentarios": f_com
+                                }).execute()
+                                st.success(f"✅ Pago de ${f_mon:,.2f} registrado con éxito.")
                                 st.rerun()
                             except Exception as e:
-                                st.error(f"Error al insertar: {e}")
+                                st.error(f"Error al registrar: {e}")
 
     # --- PESTAÑA 2: HISTORIAL ---
     with tab_historial:
@@ -121,9 +125,8 @@ def render_cobranza(supabase):
                 df_show[['fecha', 'display_vta', 'monto', 'folio', 'comentarios']],
                 column_config={
                     "display_vta": "Lote / Cliente",
-                    "monto": st.column_config.NumberColumn("Monto", format="$%,.2f"),
-                    "fecha": "Fecha",
-                    "folio": "Folio"
+                    "monto": st.column_config.NumberColumn("Importe", format="$%,.2f"),
+                    "fecha": "Fecha de Cobro"
                 },
                 use_container_width=True, hide_index=True
             )
