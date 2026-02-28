@@ -1,5 +1,5 @@
 import streamlit as st
-import pd
+import pandas as pd  # <--- Corregido: antes decía 'import pd'
 from datetime import datetime
 
 def render_cobranza(supabase):
@@ -46,7 +46,6 @@ def render_cobranza(supabase):
                 
                 if res_status.data:
                     status = res_status.data[0]
-                    # Calculamos el faltante asegurando que no sea None
                     total_pag = float(status.get('total_pagado') or 0)
                     eng_req = float(status.get('enganche_req') or 0)
                     faltante = max(0.0, eng_req - total_pag)
@@ -59,9 +58,7 @@ def render_cobranza(supabase):
                         border-radius: 12px; 
                         border-left: 6px solid #FF4B4B;
                         margin: 10px 0px 25px 0px;
-                        border-top: 1px solid #333;
-                        border-right: 1px solid #333;
-                        border-bottom: 1px solid #333;
+                        border: 1px solid #333;
                     ">
                         <p style="color: #808495; margin: 0; font-size: 0.85rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">
                             Faltante para Enganche
@@ -75,9 +72,8 @@ def render_cobranza(supabase):
                     with st.form("form_pago_final"):
                         c1, c2 = st.columns(2)
                         f_fol = c1.text_input("Folio Físico / Recibo", placeholder="Ej: A-1234")
-                        # El monto sugerido ahora es el faltante exacto
                         f_mon = c2.number_input("Monto a Recibir ($)", min_value=0.0, value=faltante if faltante > 0 else 5000.0, step=100.0)
-                        f_com = st.text_area("Comentarios del pago", placeholder="Detalles adicionales del movimiento...")
+                        f_com = st.text_area("Comentarios del pago", placeholder="Detalles adicionales...")
                         
                         if st.form_submit_button("✅ Guardar Pago", type="primary", use_container_width=True):
                             pago_data = {
@@ -89,7 +85,7 @@ def render_cobranza(supabase):
                             }
                             try:
                                 supabase.table("pagos").insert(pago_data).execute()
-                                st.success("✅ ¡Pago registrado y saldo actualizado!")
+                                st.success("✅ ¡Pago registrado exitosamente!")
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Error al insertar: {e}")
@@ -97,9 +93,7 @@ def render_cobranza(supabase):
     # --- PESTAÑA 2: HISTORIAL ---
     with tab_historial:
         if not df_p.empty:
-            # Unión en Python para mostrar nombres en lugar de IDs
             df_show = df_p.merge(df_v[['id', 'display_vta']], left_on='venta_id', right_on='id', how='left')
-            
             st.dataframe(
                 df_show[['fecha', 'display_vta', 'monto', 'folio', 'comentarios']],
                 column_config={
