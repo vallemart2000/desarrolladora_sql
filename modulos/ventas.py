@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import time # Para pausar un segundo y que se vea el efecto
+import time
 
 def render_ventas(supabase):
     st.title("📝 Gestión de Apartados y Ventas")
@@ -48,8 +48,8 @@ def render_ventas(supabase):
                 column_config={
                     "Ref": "Lote",
                     "etapa": "Etapa",
-                    "precio_lista": st.column_config.NumberColumn("Precio ($)", format="dollar"),
-                    "enganche_req": st.column_config.NumberColumn("Enganche ($)", format="dollar"),
+                    "precio_lista": st.column_config.NumberColumn("Precio Lista", format="dollar"),
+                    "enganche_req": st.column_config.NumberColumn("Enganche Req.", format="dollar"),
                 },
                 use_container_width=True,
                 hide_index=True,
@@ -65,20 +65,18 @@ def render_ventas(supabase):
                 st.subheader(f"2. Formulario de Registro: {row_u['Ref']}")
 
                 with st.form("form_nueva_venta", clear_on_submit=True):
-                    # 1 y 2. Cliente y Vendedor
                     col_pers = st.columns(2)
                     f_cli_sel = col_pers[0].selectbox("👤 1. Cliente", ["--"] + df_dir[df_dir["tipo"] == "Cliente"]["nombre"].tolist())
                     f_vende_sel = col_pers[1].selectbox("👔 2. Vendedor", ["--"] + df_dir[df_dir["tipo"] == "Vendedor"]["nombre"].tolist())
 
-                    # 3, 4 y 5. Precio, Plazo y Comisión
                     st.markdown(" ")
-                    col_money = st.columns(3)
-                    # Eliminamos 'precio_final' y usamos 'precio' que es el nombre de columna en Supabase
-                    f_tot = col_money[0].number_input("💰 3. Precio Pactado ($)", min_value=0.0, value=float(row_u['precio_lista']), format="%.2f")
-                    f_plazo = col_money[1].number_input("📅 4. Plazo (Meses)", min_value=1, max_value=240, value=48, step=1)
-                    f_comision = col_money[2].number_input("💸 5. Comisión ($)", min_value=0.0, value=5000.0, step=500.0, format="%.2f")
+                    col_money = st.columns(2) # Solo dos columnas porque el precio es informativo
+                    # Mostramos el precio pero NO lo guardamos en la tabla ventas (no existe la columna)
+                    st.info(f"💰 **Precio de Lista:** ${row_u['precio_lista']:,.2f}")
+                    
+                    f_plazo = col_money[0].number_input("📅 4. Plazo (Meses)", min_value=1, max_value=240, value=48, step=1)
+                    f_comision = col_money[1].number_input("💸 5. Comisión ($)", min_value=0.0, value=5000.0, step=500.0, format="%.2f")
 
-                    # 6. Fecha
                     st.markdown(" ")
                     f_fec = st.date_input("🗓️ 6. Fecha de Registro / Contrato", value=datetime.now())
 
@@ -90,48 +88,46 @@ def render_ventas(supabase):
                             id_cliente = int(df_dir[df_dir["nombre"] == f_cli_sel]["id"].iloc[0])
                             id_vendedor = int(df_dir[df_dir["nombre"] == f_vende_sel]["id"].iloc[0])
 
-                            # AJUSTE: Solo enviamos columnas que existen en la tabla 'ventas'
+                            # REGISTRO AJUSTADO AL SQL EXACTO
                             nueva_v_data = {
                                 "ubicacion_id": int(row_u['ubicacion_id']),
                                 "cliente_id": id_cliente,
                                 "vendedor_id": id_vendedor,
                                 "fecha_venta": str(f_fec),
                                 "comision_monto": f_comision,
-                                "plazo": int(f_plazo),
-                                "precio": f_tot  # Cambiado de precio_final a precio
+                                "plazo": int(f_plazo)
                             }
                             
                             try:
                                 supabase.table("ventas").insert(nueva_v_data).execute()
                                 
-                                # --- EFECTO VISUAL ---
-                                st.balloons() # ¡Efecto de globos/confeti!
-                                st.success(f"🎉 ¡Excelente! Venta del lote {row_u['Ref']} registrada correctamente.")
-                                time.sleep(1.5) # Pausa breve para que el usuario vea el éxito
+                                st.balloons()
+                                st.success(f"🎉 ¡Venta de {row_u['Ref']} registrada con éxito!")
+                                time.sleep(1.5)
                                 st.rerun()
                             except Exception as e: 
-                                st.error(f"Error al insertar en base de datos: {e}")
+                                st.error(f"Error: {e}")
             else:
                 st.info("💡 Seleccione un lote en la tabla de arriba para habilitar el formulario.")
 
     # --- PESTAÑA 2: EDITOR ---
     with tab_editar:
-        if df_v.empty:
-            st.info("No hay ventas registradas.")
-        else:
+        if not df_v.empty:
             df_v['edit_label'] = df_v.apply(lambda x: f"{x['display_lote']} - {x['cliente']['nombre']}", axis=1)
             edit_sel = st.selectbox("Seleccione Contrato para modificar", ["--"] + df_v["edit_label"].tolist())
-            
             if edit_sel != "--":
                 datos_v = df_v[df_v["edit_label"] == edit_sel].iloc[0]
                 with st.form("form_edit_vta"):
-                    st.warning(f"Modificando Lote: {datos_v['display_lote']}")
                     ce1, ce2 = st.columns(2)
                     e_plazo = ce1.number_input("Ajustar Plazo", value=int(datos_v.get("plazo", 48)))
                     e_com = ce2.number_input("Ajustar Comisión ($)", value=float(datos_v.get("comision_monto", 5000.0)), format="%.2f")
                     if st.form_submit_button("💾 GUARDAR CAMBIOS"):
-                        supabase.table("ventas").update({"comision_monto": e_com, "plazo": e_plazo}).eq("id", datos_v['id']).execute()
-                        st.toast("¡Cambios guardados!", icon="✅") # Otro efecto visual sutil
+                        supabase.table("ventas").update({
+                            "comision_monto": e_com, 
+                            "plazo": e_plazo
+                        }).eq("id", datos_v['id']).execute()
+                        st.toast("¡Actualizado correctamente!", icon="✅")
+                        time.sleep(1)
                         st.rerun()
 
     # --- PESTAÑA 3: HISTORIAL ---
