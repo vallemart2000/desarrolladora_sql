@@ -10,7 +10,6 @@ def render_ventas(supabase):
         res_dir = supabase.table("directorio").select("id, nombre, tipo").order("nombre").execute()
         res_ub = supabase.table("vista_estatus_lotes").select("*").order("etapa").order("manzana").order("lote").execute()
         
-        # IMPORTANTE: Seleccionamos 'plazo' explícitamente
         res_v = supabase.table("ventas").select("""
             *,
             cliente:directorio!cliente_id(nombre),
@@ -21,12 +20,6 @@ def render_ventas(supabase):
         df_dir = pd.DataFrame(res_dir.data)
         df_u = pd.DataFrame(res_ub.data)
         df_v = pd.DataFrame(res_v.data)
-
-        if not df_u.empty:
-            df_u['display'] = df_u.apply(
-                lambda x: f"M{int(x['manzana']):02d}-L{int(x['lote']):02d} | ${x['precio_lista']:,.0f} | Eng. ${x['enganche_req']:,.0f}", 
-                axis=1
-            )
         
         if not df_v.empty:
             df_v['display_lote'] = df_v['ubicacion'].apply(
@@ -41,17 +34,38 @@ def render_ventas(supabase):
 
     # --- PESTAÑA 1: NUEVO APARTADO ---
     with tab_nueva:
-        st.subheader("Registrar Intención de Compra")
-        lotes_libres = df_u[df_u["estatus_actual"] == "DISPONIBLE"]
+        st.subheader("1. Seleccione un Lote Disponible")
+        lotes_libres = df_u[df_u["estatus_actual"] == "DISPONIBLE"].copy()
         
         if lotes_libres.empty:
             st.warning("No hay lotes disponibles.")
         else:
-            f_lote_txt = st.selectbox("📍 Seleccione Lote", ["--"] + lotes_libres["display"].tolist())
+            # Preparamos la tabla para selección
+            lotes_libres['Ref'] = lotes_libres.apply(lambda x: f"M{int(x['manzana']):02d}-L{int(x['lote']):02d}", axis=1)
             
-            if f_lote_txt != "--":
-                row_u = lotes_libres[lotes_libres["display"] == f_lote_txt].iloc[0]
+            # Configuramos la tabla de selección
+            event = st.dataframe(
+                lotes_libres[["Ref", "etapa", "precio_lista", "enganche_req"]],
+                column_config={
+                    "Ref": "Lote",
+                    "etapa": "Etapa",
+                    "precio_lista": st.column_config.NumberColumn("Precio ($)", format="$%,.2f"),
+                    "enganche_req": st.column_config.NumberColumn("Enganche ($)", format="$%,.2f"),
+                },
+                use_container_width=True,
+                hide_index=True,
+                on_select="rerun", # <--- Aquí ocurre la magia
+                selection_mode="single-row"
+            )
+
+            # Verificamos si hay una fila seleccionada
+            if len(event.selection.rows) > 0:
+                idx_seleccionado = event.selection.rows[0]
+                row_u = lotes_libres.iloc[idx_seleccionado]
                 
+                st.markdown("---")
+                st.subheader(f"2. Registrar Venta: {row_u['Ref']}")
+
                 with st.form("form_nueva_venta"):
                     c1, c2 = st.columns(2)
                     f_fec = c1.date_input("📅 Fecha de Registro", value=datetime.now())
@@ -59,12 +73,12 @@ def render_ventas(supabase):
                     f_cli_sel = c2.selectbox("👤 Cliente", ["--"] + df_dir[df_dir["tipo"] == "Cliente"]["nombre"].tolist())
                     
                     st.markdown("---")
-                    cf1, cf2, cf3 = st.columns(3) # Añadimos tercera columna
+                    cf1, cf2, cf3 = st.columns(3)
                     f_tot = cf1.number_input("Precio Pactado ($)", min_value=0.0, value=float(row_u['precio_lista']))
                     f_plazo = cf2.number_input("Plazo (Meses)", min_value=1, max_value=240, value=36, step=1)
                     f_comision = cf3.number_input("Comisión ($)", min_value=0.0, value=5000.0, step=500.0)
                     
-                    if st.form_submit_button("💾 REGISTRAR APARTADO", type="primary"):
+                    if st.form_submit_button("💾 REGISTRAR APARTADO", type="primary", use_container_width=True):
                         if f_cli_sel == "--" or f_vende_sel == "--":
                             st.error("❌ Complete los datos de Cliente y Vendedor.")
                         else:
@@ -77,7 +91,7 @@ def render_ventas(supabase):
                                 "vendedor_id": id_vendedor,
                                 "fecha_venta": str(f_fec),
                                 "comision_monto": f_comision,
-                                "plazo": int(f_plazo) # Guardamos el plazo
+                                "plazo": int(f_plazo)
                             }
                             try:
                                 supabase.table("ventas").insert(nueva_v_data).execute()
@@ -85,8 +99,10 @@ def render_ventas(supabase):
                                 st.rerun()
                             except Exception as e: 
                                 st.error(f"Error: {e}")
+            else:
+                st.info("👆 Haga clic en una fila de la tabla de arriba para iniciar el registro.")
 
-    # --- PESTAÑA 2: EDITOR ---
+    # --- PESTAÑA 2: EDITOR (Se mantiene igual) ---
     with tab_editar:
         st.subheader("Modificar Contrato Existente")
         if df_v.empty:
@@ -97,13 +113,11 @@ def render_ventas(supabase):
             
             if edit_sel != "--":
                 datos_v = df_v[df_v["edit_label"] == edit_sel].iloc[0]
-                
                 with st.form("form_edit_vta"):
                     st.warning(f"Editando Lote: {datos_v['display_lote']}")
                     ce1, ce2 = st.columns(2)
                     e_plazo = ce1.number_input("Ajustar Plazo (Meses)", value=int(datos_v.get("plazo", 36)))
                     e_com = ce2.number_input("Ajustar Comisión ($)", value=float(datos_v.get("comision_monto", 0.0)))
-                    
                     if st.form_submit_button("💾 ACTUALIZAR"):
                         supabase.table("ventas").update({
                             "comision_monto": e_com,
@@ -111,14 +125,12 @@ def render_ventas(supabase):
                         }).eq("id", datos_v['id']).execute()
                         st.success("Cambios guardados."); st.rerun()
 
-    # --- PESTAÑA 3: HISTORIAL ---
+    # --- PESTAÑA 3: HISTORIAL (Se mantiene igual) ---
     with tab_lista:
         if not df_v.empty:
             st.subheader("📋 Ventas Activas")
-            # Unimos los datos para ver el plazo en la tabla de historial
             df_historial = df_v.copy()
             df_historial['vendedor_nom'] = df_historial['vendedor'].apply(lambda x: x['nombre'] if x else 'N/A')
-            
             st.dataframe(
                 df_historial[["display_lote", "fecha_venta", "plazo", "comision_monto"]],
                 column_config={
