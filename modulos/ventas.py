@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import time # Para pausar un segundo y que se vea el efecto
 
 def render_ventas(supabase):
     st.title("📝 Gestión de Apartados y Ventas")
@@ -72,11 +73,12 @@ def render_ventas(supabase):
                     # 3, 4 y 5. Precio, Plazo y Comisión
                     st.markdown(" ")
                     col_money = st.columns(3)
+                    # Eliminamos 'precio_final' y usamos 'precio' que es el nombre de columna en Supabase
                     f_tot = col_money[0].number_input("💰 3. Precio Pactado ($)", min_value=0.0, value=float(row_u['precio_lista']), format="%.2f")
                     f_plazo = col_money[1].number_input("📅 4. Plazo (Meses)", min_value=1, max_value=240, value=48, step=1)
                     f_comision = col_money[2].number_input("💸 5. Comisión ($)", min_value=0.0, value=5000.0, step=500.0, format="%.2f")
 
-                    # 6. Fecha (Al final para mejor visualización del calendario)
+                    # 6. Fecha
                     st.markdown(" ")
                     f_fec = st.date_input("🗓️ 6. Fecha de Registro / Contrato", value=datetime.now())
 
@@ -88,6 +90,7 @@ def render_ventas(supabase):
                             id_cliente = int(df_dir[df_dir["nombre"] == f_cli_sel]["id"].iloc[0])
                             id_vendedor = int(df_dir[df_dir["nombre"] == f_vende_sel]["id"].iloc[0])
 
+                            # AJUSTE: Solo enviamos columnas que existen en la tabla 'ventas'
                             nueva_v_data = {
                                 "ubicacion_id": int(row_u['ubicacion_id']),
                                 "cliente_id": id_cliente,
@@ -95,18 +98,23 @@ def render_ventas(supabase):
                                 "fecha_venta": str(f_fec),
                                 "comision_monto": f_comision,
                                 "plazo": int(f_plazo),
-                                "precio_final": f_tot # Asegúrate de tener esta columna o cámbiala por la que uses
+                                "precio": f_tot  # Cambiado de precio_final a precio
                             }
+                            
                             try:
                                 supabase.table("ventas").insert(nueva_v_data).execute()
-                                st.success(f"✅ ¡Venta de {row_u['Ref']} registrada exitosamente!")
+                                
+                                # --- EFECTO VISUAL ---
+                                st.balloons() # ¡Efecto de globos/confeti!
+                                st.success(f"🎉 ¡Excelente! Venta del lote {row_u['Ref']} registrada correctamente.")
+                                time.sleep(1.5) # Pausa breve para que el usuario vea el éxito
                                 st.rerun()
                             except Exception as e: 
                                 st.error(f"Error al insertar en base de datos: {e}")
             else:
-                st.info("💡 Selecciona un lote en la tabla de arriba para habilitar el formulario.")
+                st.info("💡 Seleccione un lote en la tabla de arriba para habilitar el formulario.")
 
-    # --- PESTAÑAS 2 Y 3 (Se mantienen con el formato dollar en tablas) ---
+    # --- PESTAÑA 2: EDITOR ---
     with tab_editar:
         if df_v.empty:
             st.info("No hay ventas registradas.")
@@ -123,8 +131,10 @@ def render_ventas(supabase):
                     e_com = ce2.number_input("Ajustar Comisión ($)", value=float(datos_v.get("comision_monto", 5000.0)), format="%.2f")
                     if st.form_submit_button("💾 GUARDAR CAMBIOS"):
                         supabase.table("ventas").update({"comision_monto": e_com, "plazo": e_plazo}).eq("id", datos_v['id']).execute()
-                        st.success("Contrato actualizado."); st.rerun()
+                        st.toast("¡Cambios guardados!", icon="✅") # Otro efecto visual sutil
+                        st.rerun()
 
+    # --- PESTAÑA 3: HISTORIAL ---
     with tab_lista:
         if not df_v.empty:
             st.dataframe(
