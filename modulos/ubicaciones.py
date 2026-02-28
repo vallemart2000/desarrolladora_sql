@@ -16,11 +16,14 @@ def render_ubicaciones(supabase):
         st.error(f"Error al cargar datos: {e}")
         return
 
-    # --- 2. MÉTRICAS PERSONALIZADAS (DISEÑO LIMPIO) ---
+    # --- 2. MÉTRICAS PERSONALIZADAS (Símbolo de peso escapado) ---
     if not df.empty:
         total_lotes = len(df)
         disponibles = len(df[df['estatus_actual'] == 'DISPONIBLE'])
         valor_total = df['precio_lista'].sum()
+
+        # Formateamos el valor fuera del HTML para evitar conflictos de sintaxis
+        valor_f = f"${valor_total:,.2f}"
 
         st.markdown(f"""
         <div style="
@@ -39,7 +42,7 @@ def render_ubicaciones(supabase):
             </div>
             <div style="background-color: #1E1E1E; padding: 20px; border-radius: 12px; border: 1px solid #333; border-left: 5px solid #29B6F6;">
                 <p style="color: #808495; margin: 0; font-size: 0.8rem; font-weight: 700; text-transform: uppercase;">Valor Inventario</p>
-                <h2 style="color: #FFFFFF; margin: 5px 0 0 0;">$ {valor_total:,.2f}</h2>
+                <h2 style="color: #FFFFFF; margin: 5px 0 0 0;">{valor_f}</h2>
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -55,13 +58,13 @@ def render_ubicaciones(supabase):
             st.dataframe(
                 df_view[["Referencia", "manzana", "lote", "etapa", "precio_lista", "enganche_req", "estatus_actual"]],
                 column_config={
-                    "Referencia": "Referencia",
+                    "Referencia": "Ref.",
                     "manzana": "Mz",
                     "lote": "Lt",
                     "etapa": "Etapa",
                     "precio_lista": st.column_config.NumberColumn("Precio Lista", format="$%,.2f"),
                     "enganche_req": st.column_config.NumberColumn("Enganche Req.", format="$%,.2f"),
-                    "estatus_actual": st.column_config.TextColumn("Estatus")
+                    "estatus_actual": "Estatus"
                 },
                 use_container_width=True,
                 hide_index=True
@@ -78,19 +81,18 @@ def render_ubicaciones(supabase):
             lote = c3.number_input("Lote #", min_value=1, step=1)
             
             c4, c5 = st.columns(2)
-            precio = c4.number_input("Precio de Lista ($)", min_value=0.0, step=1000.0)
-            enganche = c5.number_input("Enganche Requerido ($)", min_value=0.0, step=1000.0)
+            precio = c4.number_input("Precio de Lista", min_value=0.0, step=1000.0)
+            enganche = c5.number_input("Enganche Requerido", min_value=0.0, step=1000.0)
 
             if st.form_submit_button("✅ Guardar Lote", type="primary", use_container_width=True):
-                data = {
-                    "manzana": int(manzana), 
-                    "lote": int(lote), 
-                    "etapa": int(etapa),
-                    "precio": precio,
-                    "enganche_req": enganche
-                }
                 try:
-                    supabase.table("ubicaciones").insert(data).execute()
+                    supabase.table("ubicaciones").insert({
+                        "manzana": int(manzana), 
+                        "lote": int(lote), 
+                        "etapa": int(etapa),
+                        "precio": precio,
+                        "enganche_req": enganche
+                    }).execute()
                     st.success("✅ ¡Lote registrado con éxito!")
                     st.rerun()
                 except Exception as e:
@@ -107,13 +109,15 @@ def render_ubicaciones(supabase):
                 with st.form("form_edicion"):
                     st.warning(f"Editando: **{datos_lote['Referencia']}**")
                     col_e1, col_e2 = st.columns(2)
-                    nuevo_precio = col_e1.number_input("Precio ($)", value=float(datos_lote['precio_lista']), step=1000.0)
-                    nuevo_enganche = col_e2.number_input("Enganche ($)", value=float(datos_lote['enganche_req']), step=1000.0)
+                    nuevo_precio = col_e1.number_input("Precio", value=float(datos_lote['precio_lista']), step=1000.0)
+                    nuevo_enganche = col_e2.number_input("Enganche", value=float(datos_lote['enganche_req']), step=1000.0)
                     
                     c_btn1, c_btn2 = st.columns(2)
                     if c_btn1.form_submit_button("💾 Guardar Cambios", use_container_width=True):
-                        update_data = {"precio": nuevo_precio, "enganche_req": nuevo_enganche}
-                        supabase.table("ubicaciones").update(update_data).eq("id", int(datos_lote['ubicacion_id'])).execute()
+                        supabase.table("ubicaciones").update({
+                            "precio": nuevo_precio, 
+                            "enganche_req": nuevo_enganche
+                        }).eq("id", int(datos_lote['ubicacion_id'])).execute()
                         st.success("¡Actualizado!")
                         st.rerun()
                     
