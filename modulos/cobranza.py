@@ -57,7 +57,7 @@ def render_cobranza(supabase):
             event = st.dataframe(
                 df_filtrado[['Lote', 'Cliente', 'Precio']],
                 column_config={
-                    "Precio": st.column_config.NumberColumn("Precio Total", format="$%,.2f"),
+                    "Precio": st.column_config.NumberColumn("Precio Total", format="dollar"),
                 },
                 use_container_width=True,
                 hide_index=True,
@@ -163,7 +163,7 @@ def render_cobranza(supabase):
 
             st.dataframe(
                 df_historial[['fecha', 'display_vta', 'monto', 'folio', 'comentarios']],
-                column_config={"monto": st.column_config.NumberColumn("Monto", format="$%,.2f")},
+                column_config={"monto": st.column_config.NumberColumn("Monto", format="dollar")},
                 use_container_width=True, hide_index=True
             )
 
