@@ -49,8 +49,8 @@ def render_ventas(supabase):
                 column_config={
                     "Ref": "Lote",
                     "etapa": "Etapa",
-                    "precio_lista": st.column_config.NumberColumn("Precio ($)", format="$%,.2f"),
-                    "enganche_req": st.column_config.NumberColumn("Enganche ($)", format="$%,.2f"),
+                    "precio_lista": st.column_config.NumberColumn("Precio ($)", format="dollar"),
+                    "enganche_req": st.column_config.NumberColumn("Enganche ($)", format="dollar"),
                 },
                 use_container_width=True,
                 hide_index=True,
